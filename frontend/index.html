@@ -275,6 +275,7 @@ html, body {
 }
 .ctrl-btn.live-btn:hover { background: #cc2222; }
 .ctrl-btn:disabled { opacity: .4; cursor: not-allowed; }
+.ctrl-btn.step-btn { letter-spacing: .02em; }
 
 #current-time-display {
   font-size: 13px; color: var(--accent); letter-spacing: .06em;
@@ -406,6 +407,8 @@ html, body {
   <div id="controls">
     <button class="ctrl-btn live-btn" onclick="goLive()" id="live-btn">▶ LIVE</button>
     <button class="ctrl-btn" onclick="playPause()" id="pp-btn">⏸ Pause</button>
+    <button class="ctrl-btn step-btn" onclick="stepBack()" id="back-btn" title="Reculer 10 s (←)">◀◀ 10s</button>
+    <button class="ctrl-btn step-btn" onclick="stepForward()" id="fwd-btn" title="Avancer 10 s (→)" disabled>10s ▶▶</button>
     <div id="current-time-display">—</div>
     <div id="buffer-info">Buffer: — / —</div>
   </div>
@@ -484,20 +487,49 @@ function startLive() {
 
 function goLive() {
   startLive();
+  document.getElementById('fwd-btn').disabled = true;
   toast('Switched to LIVE', 'success');
 }
 
 // ── DVR mode ──────────────────────────────────────────────────
+const STEP_SEC = 10;
+
 function seekTo(ts) {
   mode = 'dvr';
   dvrPosition = ts;
   document.getElementById('dvr-badge').classList.add('visible');
   document.getElementById('live-btn').style.opacity = '1';
+  document.getElementById('fwd-btn').disabled = false;
 
   // Build clip playlist: from ts to end of buffer (or +5 min)
   const to = bufferNewest || (ts + 300);
   startHls(`${API}/api/clip.m3u8?from_time=${ts}&to_time=${to}`);
 }
+
+function stepBack() {
+  const base = (mode === 'dvr' && dvrPosition !== null)
+    ? dvrPosition
+    : (bufferNewest || Date.now() / 1000);
+  const target = Math.max(bufferOldest || (base - STEP_SEC), base - STEP_SEC);
+  seekTo(target);
+  document.getElementById('current-time-display').textContent = '⏪ DVR – ' + fmtDateTime(target);
+}
+
+function stepForward() {
+  if (mode !== 'dvr' || dvrPosition === null) return;
+  const target = dvrPosition + STEP_SEC;
+  if (bufferNewest && target >= bufferNewest - STEP_SEC) {
+    goLive();
+    return;
+  }
+  seekTo(target);
+  document.getElementById('current-time-display').textContent = '⏪ DVR – ' + fmtDateTime(target);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); stepBack(); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); stepForward(); }
+});
 
 // ── Play/pause toggle ─────────────────────────────────────────
 function playPause() {
