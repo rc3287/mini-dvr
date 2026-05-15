@@ -407,8 +407,8 @@ html, body {
   <div id="controls">
     <button class="ctrl-btn live-btn" onclick="goLive()" id="live-btn">▶ LIVE</button>
     <button class="ctrl-btn" onclick="playPause()" id="pp-btn">⏸ Pause</button>
-    <button class="ctrl-btn step-btn" onclick="stepBack()" id="back-btn" title="Reculer 1/10 s (←)">◀◀ .1s</button>
-    <button class="ctrl-btn step-btn" onclick="stepForward()" id="fwd-btn" title="Avancer 1/10 s (→)" disabled>.1s ▶▶</button>
+    <button class="ctrl-btn step-btn" onclick="stepBack()" id="back-btn" title="Image précédente (←)">◀ img</button>
+    <button class="ctrl-btn step-btn" onclick="stepForward()" id="fwd-btn" title="Image suivante (→)" disabled>img ▶</button>
     <div id="current-time-display">—</div>
     <div id="buffer-info">Buffer: — / —</div>
   </div>
@@ -492,7 +492,8 @@ function goLive() {
 }
 
 // ── DVR mode ──────────────────────────────────────────────────
-const STEP_SEC = 0.1;
+const FPS   = 25;
+const FRAME = 1 / FPS;
 
 function seekTo(ts) {
   mode = 'dvr';
@@ -507,23 +508,31 @@ function seekTo(ts) {
 }
 
 function stepBack() {
-  const base = (mode === 'dvr' && dvrPosition !== null)
-    ? dvrPosition
-    : (bufferNewest || Date.now() / 1000);
-  const target = Math.max(bufferOldest || (base - STEP_SEC), base - STEP_SEC);
-  seekTo(target);
-  document.getElementById('current-time-display').textContent = '⏪ DVR – ' + fmtDateTime(target);
+  if (mode !== 'dvr') return;
+  const video = document.getElementById('video');
+  pauseForStep(video);
+  video.currentTime = Math.max(0, video.currentTime - FRAME);
+  updateFrameDisplay(video);
 }
 
 function stepForward() {
-  if (mode !== 'dvr' || dvrPosition === null) return;
-  const target = dvrPosition + STEP_SEC;
-  if (bufferNewest && target >= bufferNewest - STEP_SEC) {
-    goLive();
-    return;
+  if (mode !== 'dvr') return;
+  const video = document.getElementById('video');
+  pauseForStep(video);
+  video.currentTime += FRAME;
+  updateFrameDisplay(video);
+}
+
+function pauseForStep(video) {
+  if (!video.paused) {
+    video.pause();
+    document.getElementById('pp-btn').textContent = '▶ Play';
   }
-  seekTo(target);
-  document.getElementById('current-time-display').textContent = '⏪ DVR – ' + fmtDateTime(target);
+}
+
+function updateFrameDisplay(video) {
+  const absTs = dvrPosition + video.currentTime;
+  document.getElementById('current-time-display').textContent = '⏸ DVR – ' + fmtDateTime(absTs);
 }
 
 document.addEventListener('keydown', (e) => {
@@ -759,8 +768,8 @@ function fmtTime(ts) {
 function fmtDateTime(ts) {
   const d = new Date(ts * 1000);
   const base = d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
-  const tenth = Math.floor((ts * 10) % 10);
-  return `${base}.${tenth}`;
+  const cs = Math.floor((ts * 100) % 100).toString().padStart(2, '0');
+  return `${base}.${cs}`;
 }
 
 function toast(msg, type='') {
