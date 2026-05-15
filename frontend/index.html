@@ -407,8 +407,8 @@ html, body {
   <div id="controls">
     <button class="ctrl-btn live-btn" onclick="goLive()" id="live-btn">▶ LIVE</button>
     <button class="ctrl-btn" onclick="playPause()" id="pp-btn">⏸ Pause</button>
-    <button class="ctrl-btn step-btn" onclick="stepBack()" id="back-btn" title="Reculer 10 s (←)">◀◀ 10s</button>
-    <button class="ctrl-btn step-btn" onclick="stepForward()" id="fwd-btn" title="Avancer 10 s (→)" disabled>10s ▶▶</button>
+    <button class="ctrl-btn step-btn" onclick="stepBack()" id="back-btn" title="Reculer 1/10 s (←)">◀◀ .1s</button>
+    <button class="ctrl-btn step-btn" onclick="stepForward()" id="fwd-btn" title="Avancer 1/10 s (→)" disabled>.1s ▶▶</button>
     <div id="current-time-display">—</div>
     <div id="buffer-info">Buffer: — / —</div>
   </div>
@@ -492,7 +492,7 @@ function goLive() {
 }
 
 // ── DVR mode ──────────────────────────────────────────────────
-const STEP_SEC = 10;
+const STEP_SEC = 0.1;
 
 function seekTo(ts) {
   mode = 'dvr';
@@ -758,7 +758,9 @@ function fmtTime(ts) {
 }
 function fmtDateTime(ts) {
   const d = new Date(ts * 1000);
-  return d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const base = d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const tenth = Math.floor((ts * 10) % 10);
+  return `${base}.${tenth}`;
 }
 
 function toast(msg, type='') {
