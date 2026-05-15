@@ -1,7 +1,7 @@
 # Mini-DVR RTSP
 
-A lightweight DVR for Linux — RTSP → ring buffer → web player with timeline.  
-No cloud. No transcodage. Runs on an old PC.
+A lightweight DVR for Linux — RTSP → HLS ring buffer → web player with timeline scrubbing.  
+No cloud. No transcoding. Runs on an old PC or a Raspberry Pi.
 
 ---
 
@@ -9,14 +9,15 @@ No cloud. No transcodage. Runs on an old PC.
 
 | Feature | Details |
 |---|---|
-| Live view | HLS via browser, near-zero lag |
-| Ring buffer | 10 – 60 minutes, configurable |
-| Timeline | Click anywhere to jump back |
-| DVR mode | Play any point in buffer |
+| Live view | HLS via browser, ~7 s latency |
+| Ring buffer | 10–60 minutes, configurable |
+| Timeline | Click anywhere to jump back in time |
+| DVR playback | Play any moment in the buffer |
 | Return to live | One click |
 | Camera discovery | Auto-scan LAN for RTSP cameras |
-| Copy-stream | FFmpeg copy mode — minimal CPU |
-| Auto-restart | Reconnects after RTSP drops |
+| Copy-stream | FFmpeg copy mode — no transcoding, minimal CPU |
+| Auto-restart | Reconnects automatically after RTSP drops |
+| Buffer cleanup | Segments older than `buffer_minutes` are deleted automatically |
 | Systemd ready | Auto-start on boot |
 
 ---
@@ -24,41 +25,27 @@ No cloud. No transcodage. Runs on an old PC.
 ## Quick start
 
 ```bash
-# 1. Clone / copy the project
-git clone <repo> mini-dvr
+git clone https://github.com/rc3287/mini-dvr
 cd mini-dvr
 
-# 2. Install (first time only)
 chmod +x scripts/install.sh scripts/run.sh
-./scripts/install.sh
-
-# 3. Run
-./scripts/run.sh
-
-# 4. Open browser
-# http://localhost:8080
+./scripts/install.sh   # creates .venv, installs Python deps
+./scripts/run.sh       # starts FastAPI on port 8080
 ```
 
----
-
-## First use
-
-1. Open **http://localhost:8080**
-2. Click **⚙ Settings** in the header
-3. Enter your RTSP URL: `rtsp://admin:password@192.168.1.50/stream`
-4. Click **Save & restart**
+Open **http://localhost:8080**, click **⚙ Settings**, enter your RTSP URL and save.
 
 **Or use Camera Discovery:**
 1. Enter your network CIDR (e.g. `192.168.1.0/24`)
 2. Click **⊕ Scan network**
 3. Click any result to auto-fill the URL
-4. Save & restart
+4. Click **Save & restart**
 
 ---
 
-## Configuration reference
+## Configuration
 
-`config.json` at the project root (also editable via the web UI):
+`config.json` at the project root (also editable live via the web UI):
 
 ```json
 {
@@ -71,13 +58,15 @@ chmod +x scripts/install.sh scripts/run.sh
 }
 ```
 
-| Key | Default | Description |
+| Key | Default | Notes |
 |---|---|---|
-| `rtsp_url` | `""` | Full RTSP stream URL |
-| `buffer_minutes` | `30` | Ring buffer size (10–60) |
-| `segment_seconds` | `2` | Segment duration (1–10) |
-| `scan_network` | `192.168.1.0/24` | CIDR to scan |
-| `rtsp_port` | `554` | Port to probe during scan |
+| `rtsp_url` | `""` | Full RTSP URL including credentials |
+| `buffer_minutes` | `30` | Clamped to 10–60. Controls disk usage and DVR window. |
+| `segment_seconds` | `2` | Clamped to 1–10. Lower = less latency, more files. |
+| `scan_network` | `192.168.1.0/24` | CIDR passed to nmap |
+| `rtsp_port` | `554` | Port probed during camera scan |
+
+> `config.json` is git-ignored — your credentials are never committed.
 
 ---
 
@@ -85,103 +74,139 @@ chmod +x scripts/install.sh scripts/run.sh
 
 ```
 RTSP camera
-    │
-    │  TCP (copy-stream, no transcoding)
+    │  TCP transport (no transcoding)
     ▼
-FFmpeg segmenter
+FFmpeg  (-f hls, copy mode)
     │
-    │  .ts segments  (segment_XXXX.ts)
-    ▼
-buffer/          ← ring buffer on disk
+    ├── buffer/live.m3u8          rolling 6-segment live playlist
+    └── buffer/segment_XXXX.ts   individual transport stream segments
     │
-    │  HLS playlist
     ▼
 FastAPI backend  (port 8080)
     │
-    │  /api/live.m3u8   — rolling 5-segment live playlist
-    │  /api/playlist.m3u8 — full buffer playlist
-    │  /api/clip.m3u8   — time-range clip playlist
-    │  /api/segments    — segment list + timestamps
-    │  /api/scan        — LAN camera discovery
-    │  /api/config      — read/write config
-    │  /segments/*.ts   — serve individual segments
-    ▼
-Browser (HLS.js)
+    ├── GET  /api/live.m3u8       serve live.m3u8 directly (FileResponse)
+    ├── GET  /api/playlist.m3u8   full buffer playlist for timeline
+    ├── GET  /api/clip.m3u8       time-range clip playlist (DVR seek)
+    ├── GET  /segments/*.ts       serve individual segments
+    ├── GET  /api/status          recording state, buffer stats
+    ├── GET  /api/segments        segment list with timestamps
+    ├── GET  /api/scan            LAN camera discovery
+    ├── GET  /api/config          read config
+    ├── POST /api/config          write config + restart recorder
+    ├── POST /api/recorder/start  start FFmpeg
+    ├── POST /api/recorder/stop   stop FFmpeg
+    └── POST /api/clear-buffer    delete all segments
     │
-    │  Live view / timeline / DVR scrub
     ▼
-User
+Browser  (HLS.js)
+    live view · timeline bar · DVR scrub · camera scan UI
 ```
+
+### How the live playlist works
+
+FFmpeg writes `buffer/live.m3u8` directly using its native HLS muxer (`-f hls`).  
+The playlist is a rolling window of the last **6 segments** (`hls_list_size=6`).  
+Old segments are **not** deleted by FFmpeg — a background task (`cleanup_buffer_loop`) removes files older than `buffer_minutes` every 60 seconds, freeing disk space while keeping the DVR window intact.
+
+### Why `omit_endlist` (no `#EXT-X-ENDLIST`)
+
+Omitting the end marker tells HLS.js the stream is live and to keep polling the playlist for new segments.
 
 ---
 
-## Timeline & DVR usage
+## Latency
 
-- The **timeline bar** covers your full buffer window
-- **Hover** to preview timestamps
-- **Click** any point to jump to that moment (DVR mode)
-- The **● DVR** badge appears when you're in playback mode
-- **▶ LIVE** button returns to the live edge instantly
+With default settings (2 s segments):
+
+| Stage | Time |
+|---|---|
+| FFmpeg segment encoding | ~2 s (one segment) |
+| HLS.js live sync point (`liveSyncDurationCount=2`) | ~4 s behind live edge |
+| Network + player buffer | ~1 s |
+| **Total** | **~7 s** |
+
+To reduce latency further, set `segment_seconds: 1` in config — this halves the minimum latency (~4 s) at the cost of twice as many files. True sub-second latency would require Low-Latency HLS (LL-HLS), which needs re-encoding.
 
 ---
 
 ## Buffer sizing
 
-| Buffer | Segments (2 s each) | Approx. disk usage* |
+| Buffer | Segments @ 2 s | Approx. disk usage* |
 |---|---|---|
 | 10 min | 300 | ~180 MB |
 | 30 min | 900 | ~540 MB |
 | 60 min | 1800 | ~1.1 GB |
 
-*Varies greatly by camera resolution and bitrate. A 1080p H.264 camera at 2 Mbps uses ~900 MB/hour.
+*Depends on camera resolution and bitrate. A 1080p H.264 stream at 2 Mbps uses ~900 MB/hour.
 
 ---
 
-## Dependencies
+## API reference
 
-- **Python 3.10+**
-- **FFmpeg** (system package)
-- **nmap** (for camera discovery)
-- **netcat** (nc, for port probing)
-- Python packages: `fastapi`, `uvicorn`
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/status` | Recording state, segment count, buffer duration |
+| `GET` | `/api/config` | Current configuration |
+| `POST` | `/api/config` | Update config (body: JSON subset of config keys) |
+| `GET` | `/api/live.m3u8` | Live HLS playlist (serve to HLS.js) |
+| `GET` | `/api/playlist.m3u8` | Full buffer playlist |
+| `GET` | `/api/clip.m3u8?from_time=&to_time=` | Clip playlist for a Unix timestamp range |
+| `GET` | `/api/segments` | List of segments with mtime and size |
+| `GET` | `/segments/{filename}` | Serve a `.ts` segment |
+| `POST` | `/api/recorder/start` | Start FFmpeg |
+| `POST` | `/api/recorder/stop` | Stop FFmpeg |
+| `POST` | `/api/clear-buffer` | Delete all `.ts` segments from disk |
+| `GET` | `/api/scan` | Scan LAN for RTSP cameras |
 
 ---
 
 ## Systemd service
 
 ```bash
-# After install.sh, or manually:
 sudo cp systemd/mini-dvr.service /etc/systemd/system/
-# Edit User= and WorkingDirectory= in the file
+# Edit User= and WorkingDirectory= to match your setup
 sudo systemctl daemon-reload
-sudo systemctl enable mini-dvr
-sudo systemctl start mini-dvr
+sudo systemctl enable --now mini-dvr
 
-# View logs:
+# Follow logs
 journalctl -u mini-dvr -f
 ```
 
 ---
 
+## Dependencies
+
+- **Python 3.10+**
+- **FFmpeg** — `sudo apt install ffmpeg`
+- **nmap** — `sudo apt install nmap` (camera discovery)
+- **netcat** — `sudo apt install netcat` (port probing)
+- Python: `fastapi`, `uvicorn[standard]`
+
+---
+
 ## Troubleshooting
 
-**No video / blank player**
-- Check RTSP URL is correct and reachable: `ffprobe rtsp://...`
-- Check backend is running: `curl http://localhost:8080/api/status`
-- Check buffer has segments: `ls buffer/`
+**Blank player / no video**
+```bash
+ffprobe rtsp://user:pass@192.168.1.50/stream   # test RTSP directly
+curl http://localhost:8080/api/status           # check backend
+ls buffer/                                      # check segments exist
+```
 
-**High CPU**
-- Verify FFmpeg is using copy mode (default): `ps aux | grep ffmpeg`
-- Avoid re-encoding — do NOT set `-c:v libx264`
+**High CPU usage**
+- FFmpeg must run in copy mode (default). Verify: `ps aux | grep ffmpeg` should show `-c copy`, not `-c:v libx264`.
+
+**13+ second latency**
+- Delete `buffer/live.m3u8` and restart the recorder — the playlist may have accumulated thousands of entries from a previous `append_list` session.
 
 **Camera not found by scan**
-- Check CIDR matches your network: `ip addr`
-- Install nmap: `sudo apt install nmap`
-- Try specifying the RTSP URL manually
+- Verify your CIDR: `ip addr`
+- `sudo apt install nmap`
+- Enter the RTSP URL manually in Settings
 
-**RTSP keeps disconnecting**
-- Backend auto-restarts FFmpeg after 5 s
-- Check camera firmware / network stability
+**RTSP keeps dropping**
+- The recorder auto-restarts after 5 s. Check camera firmware and network stability.
+- Some cameras require `-rtsp_transport udp` — edit the FFmpeg command in `backend/server.py`.
 
 ---
 
