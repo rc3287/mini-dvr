@@ -1,0 +1,16 @@
+[Unit]
+Description=Mini-DVR RTSP Service
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/opt/mini-dvr
+ExecStart=/opt/mini-dvr/.venv/bin/uvicorn backend.server:app --host 0.0.0.0 --port 8080
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

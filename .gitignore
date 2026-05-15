@@ -1,0 +1,13 @@
+# Buffer segments and live playlist
+buffer/
+
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Config (contains RTSP URL / credentials)
+config.json

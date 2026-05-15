@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mini-DVR</title>
+
+<!-- HLS.js for in-browser HLS playback -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.7/hls.min.js"></script>
+
+<style>
+/* ── Reset & Variables ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0a0c10;
+  --surface:   #111318;
+  --surface2:  #1a1d24;
+  --border:    #2a2d36;
+  --accent:    #00d4ff;
+  --accent2:   #ff6b35;
+  --red:       #ff3b3b;
+  --green:     #00e676;
+  --text:      #e2e6f0;
+  --muted:     #6b7080;
+  --radius:    6px;
+  --font:      'JetBrains Mono', 'Fira Mono', 'Courier New', monospace;
+}
+
+html, body {
+  height: 100%; background: var(--bg);
+  color: var(--text); font-family: var(--font);
+  font-size: 13px; line-height: 1.5;
+  overflow: hidden;
+}
+
+/* ── Layout ─────────────────────────────────────────────────────── */
+#app {
+  display: grid;
+  grid-template-rows: 44px 1fr auto auto;
+  grid-template-columns: 1fr 280px;
+  grid-template-areas:
+    "header  header"
+    "player  sidebar"
+    "timeline timeline"
+    "controls controls";
+  height: 100vh;
+  gap: 0;
+}
+
+/* ── Header ─────────────────────────────────────────────────────── */
+#header {
+  grid-area: header;
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.logo {
+  font-size: 15px; font-weight: 700; letter-spacing: .08em;
+  color: var(--accent); text-transform: uppercase;
+}
+.logo span { color: var(--accent2); }
+
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--muted);
+  transition: background .4s;
+}
+.status-dot.live { background: var(--red); animation: pulse 1.2s infinite; }
+.status-dot.ok   { background: var(--green); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+#status-label {
+  font-size: 11px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase;
+}
+
+.spacer { flex: 1; }
+
+.header-btn {
+  padding: 5px 12px; border-radius: var(--radius);
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); cursor: pointer; font-family: var(--font);
+  font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+  transition: all .15s;
+}
+.header-btn:hover { border-color: var(--accent); color: var(--accent); }
+.header-btn.danger:hover { border-color: var(--red); color: var(--red); }
+
+/* ── Video Player ─────────────────────────────────────────────── */
+#player-area {
+  grid-area: player;
+  background: #000;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: hidden;
+}
+
+#video {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+#player-overlay {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+
+#dvr-badge {
+  position: absolute; top: 12px; left: 12px;
+  padding: 3px 10px; border-radius: 3px;
+  font-size: 11px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase;
+  background: var(--red); color: #fff;
+  opacity: 0;
+  transition: opacity .3s;
+}
+#dvr-badge.visible { opacity: 1; }
+
+#loading-msg {
+  color: var(--muted); font-size: 13px; letter-spacing: .05em;
+  text-align: center;
+}
+#loading-msg.hidden { display: none; }
+
+/* ── Sidebar ─────────────────────────────────────────────────────── */
+#sidebar {
+  grid-area: sidebar;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+}
+
+.sidebar-section {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-title {
+  font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 8px;
+}
+
+.stat-row {
+  display: flex; justify-content: space-between;
+  padding: 3px 0; font-size: 12px;
+}
+.stat-row .key { color: var(--muted); }
+.stat-row .val { color: var(--text); font-weight: 600; }
+.stat-row .val.green { color: var(--green); }
+.stat-row .val.red   { color: var(--red);   }
+
+/* Config form */
+.field { margin-bottom: 8px; }
+.field label {
+  display: block; font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 3px;
+}
+.field input, .field select {
+  width: 100%; padding: 5px 8px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text);
+  font-family: var(--font); font-size: 12px;
+  outline: none; transition: border-color .15s;
+}
+.field input:focus, .field select:focus { border-color: var(--accent); }
+
+.btn {
+  width: 100%; padding: 7px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--surface2);
+  color: var(--text); font-family: var(--font); font-size: 11px;
+  letter-spacing: .06em; text-transform: uppercase;
+  cursor: pointer; transition: all .15s; margin-top: 4px;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700; }
+.btn.primary:hover { background: #00aacc; }
+.btn.danger:hover  { border-color: var(--red); color: var(--red); }
+
+/* Scan results */
+#scan-results {
+  max-height: 160px; overflow-y: auto; margin-top: 6px;
+}
+.camera-result {
+  padding: 6px 8px; border-radius: var(--radius);
+  background: var(--bg); border: 1px solid var(--border);
+  margin-bottom: 4px; cursor: pointer;
+  transition: border-color .15s;
+}
+.camera-result:hover { border-color: var(--accent); }
+.camera-result .ip { color: var(--accent); font-weight: 700; font-size: 12px; }
+.camera-result .url { color: var(--muted); font-size: 10px; word-break: break-all; }
+.camera-result .badge {
+  display: inline-block; padding: 1px 5px; border-radius: 3px;
+  font-size: 9px; text-transform: uppercase; font-weight: 700;
+  background: var(--green); color: var(--bg); margin-left: 6px;
+}
+.camera-result .badge.warn { background: var(--accent2); }
+
+/* ── Timeline ─────────────────────────────────────────────────────── */
+#timeline-area {
+  grid-area: timeline;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 10px 16px 6px;
+  user-select: none;
+}
+
+#timeline-label {
+  font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 6px; display: flex;
+  justify-content: space-between; align-items: center;
+}
+
+#timeline-wrap {
+  position: relative; height: 32px;
+  background: var(--bg); border-radius: var(--radius);
+  border: 1px solid var(--border);
+  cursor: crosshair; overflow: hidden;
+}
+
+#timeline-fill {
+  position: absolute; left: 0; top: 0; height: 100%;
+  background: linear-gradient(90deg, #00d4ff22, #00d4ff44);
+  border-right: 2px solid var(--accent);
+  transition: width .2s;
+}
+
+#timeline-cursor {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: var(--accent2);
+  pointer-events: none; display: none;
+}
+
+#timeline-time-label {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  background: var(--accent2); color: var(--bg);
+  padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 700;
+  pointer-events: none; display: none; white-space: nowrap;
+}
+
+/* tick marks */
+#timeline-ticks {
+  display: flex; justify-content: space-between;
+  padding: 2px 0; font-size: 9px; color: var(--muted);
+  letter-spacing: .03em;
+}
+
+/* ── Controls ─────────────────────────────────────────────────────── */
+#controls {
+  grid-area: controls;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.ctrl-btn {
+  padding: 6px 14px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--surface2);
+  color: var(--text); font-family: var(--font); font-size: 11px;
+  text-transform: uppercase; letter-spacing: .06em;
+  cursor: pointer; transition: all .15s;
+}
+.ctrl-btn:hover { border-color: var(--accent); color: var(--accent); }
+.ctrl-btn.live-btn {
+  background: var(--red); border-color: var(--red); color: #fff; font-weight: 700;
+}
+.ctrl-btn.live-btn:hover { background: #cc2222; }
+.ctrl-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+#current-time-display {
+  font-size: 13px; color: var(--accent); letter-spacing: .06em;
+  min-width: 160px;
+}
+
+#buffer-info {
+  margin-left: auto; font-size: 10px; color: var(--muted); letter-spacing: .04em;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Modal / Toast ─────────────────────────────────────────────────── */
+#toast {
+  position: fixed; bottom: 20px; right: 20px;
+  padding: 10px 18px; border-radius: var(--radius);
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); font-size: 12px;
+  opacity: 0; pointer-events: none;
+  transition: opacity .3s;
+  z-index: 100;
+}
+#toast.show { opacity: 1; }
+#toast.error { border-color: var(--red); color: var(--red); }
+#toast.success { border-color: var(--green); color: var(--green); }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── Header ── -->
+  <header id="header">
+    <div class="logo">Mini<span>-</span>DVR</div>
+    <div class="status-dot" id="status-dot"></div>
+    <div id="status-label">Connecting…</div>
+    <div class="spacer"></div>
+    <button class="header-btn" onclick="openSettings()">⚙ Settings</button>
+    <button class="header-btn danger" onclick="clearBuffer()">⊗ Clear buffer</button>
+  </header>
+
+  <!-- ── Player ── -->
+  <div id="player-area">
+    <video id="video" playsinline autoplay muted></video>
+    <div id="player-overlay">
+      <div id="loading-msg">
+        No RTSP source configured.<br>
+        <span style="font-size:11px;color:var(--muted)">Open Settings or scan the network.</span>
+      </div>
+    </div>
+    <div id="dvr-badge">● DVR</div>
+  </div>
+
+  <!-- ── Sidebar ── -->
+  <aside id="sidebar">
+
+    <!-- Status -->
+    <div class="sidebar-section">
+      <div class="sidebar-title">Status</div>
+      <div class="stat-row"><span class="key">Recording</span><span class="val" id="rec-status">—</span></div>
+      <div class="stat-row"><span class="key">Segments</span><span class="val" id="seg-count">—</span></div>
+      <div class="stat-row"><span class="key">Buffer</span><span class="val" id="buf-dur">—</span></div>
+      <div class="stat-row"><span class="key">RTSP URL</span></div>
+      <div style="color:var(--accent);font-size:10px;word-break:break-all;margin-top:2px" id="rtsp-display">—</div>
+    </div>
+
+    <!-- Network scan -->
+    <div class="sidebar-section">
+      <div class="sidebar-title">Camera Discovery</div>
+      <div class="field">
+        <label>Network CIDR</label>
+        <input type="text" id="scan-network" value="192.168.1.0/24" />
+      </div>
+      <button class="btn" onclick="scanNetwork()" id="scan-btn">⊕ Scan network</button>
+      <div id="scan-results"></div>
+    </div>
+
+    <!-- Settings (hidden by default, toggled) -->
+    <div class="sidebar-section" id="settings-panel" style="display:none">
+      <div class="sidebar-title">Configuration</div>
+      <div class="field">
+        <label>RTSP URL</label>
+        <input type="text" id="cfg-rtsp" placeholder="rtsp://user:pass@192.168.1.x/stream" />
+      </div>
+      <div class="field">
+        <label>Buffer duration (minutes)</label>
+        <input type="range" id="cfg-buffer" min="10" max="60" step="5" value="30"
+               oninput="document.getElementById('cfg-buffer-val').textContent=this.value+'min'" />
+        <span id="cfg-buffer-val" style="color:var(--accent);font-size:12px">30min</span>
+      </div>
+      <div class="field">
+        <label>Segment size (seconds)</label>
+        <select id="cfg-seg">
+          <option value="1">1 s</option>
+          <option value="2" selected>2 s</option>
+          <option value="5">5 s</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>RTSP discovery port</label>
+        <input type="number" id="cfg-rtsp-port" value="554" />
+      </div>
+      <button class="btn primary" onclick="saveConfig()">✓ Save & restart</button>
+    </div>
+
+  </aside>
+
+  <!-- ── Timeline ── -->
+  <div id="timeline-area">
+    <div id="timeline-label">
+      <span>Timeline</span>
+      <span id="timeline-range-label" style="color:var(--accent)">—</span>
+    </div>
+    <div id="timeline-wrap"
+         onmousemove="timelineHover(event)"
+         onmouseleave="timelineLeave()"
+         onclick="timelineClick(event)">
+      <div id="timeline-fill"></div>
+      <div id="timeline-cursor"></div>
+      <div id="timeline-time-label"></div>
+    </div>
+    <div id="timeline-ticks"></div>
+  </div>
+
+  <!-- ── Controls ── -->
+  <div id="controls">
+    <button class="ctrl-btn live-btn" onclick="goLive()" id="live-btn">▶ LIVE</button>
+    <button class="ctrl-btn" onclick="playPause()" id="pp-btn">⏸ Pause</button>
+    <div id="current-time-display">—</div>
+    <div id="buffer-info">Buffer: — / —</div>
+  </div>
+
+</div><!-- #app -->
+
+<div id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   Mini-DVR Frontend
+   ═══════════════════════════════════════════════════════════════ */
+
+const API   = '';          // same origin
+let hls     = null;
+let mode    = 'live';      // 'live' | 'dvr'
+let statusInterval  = null;
+let timelineInterval = null;
+
+// Buffer metadata
+let bufferOldest = null;   // Unix timestamp
+let bufferNewest = null;
+let bufferSegs   = [];
+
+// Currently playing position (for DVR mode)
+let dvrPosition  = null;   // Unix timestamp
+
+// ── Init ──────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  loadConfig();
+  startLive();
+  statusInterval   = setInterval(refreshStatus, 3000);
+  timelineInterval = setInterval(refreshTimeline, 5000);
+  refreshStatus();
+  refreshTimeline();
+});
+
+// ── HLS helpers ───────────────────────────────────────────────
+function destroyHls() {
+  if (hls) { hls.destroy(); hls = null; }
+}
+
+function startHls(url) {
+  const video = document.getElementById('video');
+  destroyHls();
+
+  if (Hls.isSupported()) {
+    hls = new Hls({
+      liveSyncDurationCount:       2,
+      liveMaxLatencyDurationCount: 4,
+      maxBufferLength:             30,
+      manifestLoadingMaxRetry:     20,
+      lowLatencyMode:              false,
+    });
+    hls.loadSource(url);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+    hls.on(Hls.Events.ERROR, (_, d) => {
+      if (d.fatal) { console.warn('HLS fatal', d.type, d.details); }
+    });
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = url;
+    video.play();
+  }
+}
+
+// ── Live mode ─────────────────────────────────────────────────
+function startLive() {
+  mode = 'live';
+  document.getElementById('dvr-badge').classList.remove('visible');
+  document.getElementById('live-btn').style.opacity = '.4';
+  document.getElementById('pp-btn').textContent = '⏸ Pause';
+  startHls(`${API}/api/live.m3u8`);
+  document.getElementById('loading-msg').classList.add('hidden');
+}
+
+function goLive() {
+  startLive();
+  toast('Switched to LIVE', 'success');
+}
+
+// ── DVR mode ──────────────────────────────────────────────────
+function seekTo(ts) {
+  mode = 'dvr';
+  dvrPosition = ts;
+  document.getElementById('dvr-badge').classList.add('visible');
+  document.getElementById('live-btn').style.opacity = '1';
+
+  // Build clip playlist: from ts to end of buffer (or +5 min)
+  const to = bufferNewest || (ts + 300);
+  startHls(`${API}/api/clip.m3u8?from_time=${ts}&to_time=${to}`);
+}
+
+// ── Play/pause toggle ─────────────────────────────────────────
+function playPause() {
+  const v   = document.getElementById('video');
+  const btn = document.getElementById('pp-btn');
+  if (v.paused) { v.play();  btn.textContent = '⏸ Pause'; }
+  else          { v.pause(); btn.textContent = '▶ Play';  }
+}
+
+// ── Status polling ─────────────────────────────────────────────
+async function refreshStatus() {
+  try {
+    const r   = await fetch(`${API}/api/status`);
+    const d   = await r.json();
+    bufferOldest = d.oldest_segment_time;
+    bufferNewest = d.newest_segment_time;
+
+    // Dot + label
+    const dot   = document.getElementById('status-dot');
+    const label = document.getElementById('status-label');
+    if (d.recording) {
+      dot.className = 'status-dot live';
+      label.textContent = 'Recording';
+    } else {
+      dot.className = d.rtsp_url ? 'status-dot' : 'status-dot';
+      label.textContent = d.rtsp_url ? 'Stopped' : 'No source';
+    }
+
+    document.getElementById('rec-status').textContent = d.recording ? '● REC' : '○ Stopped';
+    document.getElementById('rec-status').className    = 'val ' + (d.recording ? 'red' : '');
+    document.getElementById('seg-count').textContent  = d.segment_count;
+    document.getElementById('rtsp-display').textContent = d.rtsp_url || 'Not set';
+
+    const dur = d.buffer_duration_seconds;
+    const durStr = dur >= 60 ? `${Math.floor(dur/60)}m ${dur%60}s` : `${dur}s`;
+    document.getElementById('buf-dur').textContent    = durStr;
+    document.getElementById('buffer-info').textContent =
+      `Buffer: ${durStr} / ${d.buffer_minutes}min`;
+
+    // Current time display
+    if (mode === 'live') {
+      document.getElementById('current-time-display').textContent = '▶ LIVE – ' + fmtTime(Date.now()/1000);
+    }
+
+  } catch(e) {
+    document.getElementById('status-dot').className = 'status-dot';
+    document.getElementById('status-label').textContent = 'API unreachable';
+  }
+}
+
+// ── Timeline ──────────────────────────────────────────────────
+async function refreshTimeline() {
+  try {
+    const r    = await fetch(`${API}/api/segments`);
+    const data = await r.json();
+    bufferSegs = data.segments || [];
+    renderTimeline();
+  } catch(e) {}
+}
+
+function renderTimeline() {
+  if (!bufferSegs.length) return;
+
+  const oldest = bufferSegs[0].mtime;
+  const newest = bufferSegs[bufferSegs.length - 1].mtime;
+  bufferOldest = oldest;
+  bufferNewest = newest;
+
+  const totalSec = newest - oldest || 1;
+  const nowFrac  = 1.0; // live edge
+  document.getElementById('timeline-fill').style.width = (nowFrac * 100) + '%';
+
+  // Range label
+  document.getElementById('timeline-range-label').textContent =
+    fmtTime(oldest) + ' → ' + fmtTime(newest);
+
+  // Tick marks (every 5 or 10 minutes)
+  const stepMin = totalSec <= 600 ? 1 : totalSec <= 1800 ? 5 : 10;
+  const ticksEl = document.getElementById('timeline-ticks');
+  ticksEl.innerHTML = '';
+  for (let t = oldest; t <= newest; t += stepMin * 60) {
+    const frac = (t - oldest) / totalSec;
+    const span = document.createElement('span');
+    span.style.position   = 'absolute';
+    span.style.left       = (frac * 100) + '%';
+    span.style.transform  = 'translateX(-50%)';
+    span.textContent = fmtTime(t);
+    ticksEl.appendChild(span);
+  }
+  ticksEl.style.position = 'relative';
+  ticksEl.style.height   = '14px';
+}
+
+function timelineHover(e) {
+  if (!bufferOldest || !bufferNewest) return;
+  const wrap   = document.getElementById('timeline-wrap');
+  const cursor = document.getElementById('timeline-cursor');
+  const tlabel = document.getElementById('timeline-time-label');
+  const rect   = wrap.getBoundingClientRect();
+  const frac   = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const ts     = bufferOldest + frac * (bufferNewest - bufferOldest);
+
+  cursor.style.left    = (frac * 100) + '%';
+  cursor.style.display = 'block';
+  tlabel.style.left    = Math.min(frac * 100, 90) + '%';
+  tlabel.style.display = 'block';
+  tlabel.textContent   = fmtDateTime(ts);
+}
+
+function timelineLeave() {
+  document.getElementById('timeline-cursor').style.display    = 'none';
+  document.getElementById('timeline-time-label').style.display = 'none';
+}
+
+function timelineClick(e) {
+  if (!bufferOldest || !bufferNewest) return;
+  const wrap = document.getElementById('timeline-wrap');
+  const rect = wrap.getBoundingClientRect();
+  const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const ts   = bufferOldest + frac * (bufferNewest - bufferOldest);
+  seekTo(ts);
+  document.getElementById('current-time-display').textContent = '⏪ DVR – ' + fmtDateTime(ts);
+}
+
+// ── Settings panel ────────────────────────────────────────────
+function openSettings() {
+  const panel = document.getElementById('settings-panel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+async function loadConfig() {
+  try {
+    const r   = await fetch(`${API}/api/config`);
+    const cfg = await r.json();
+    document.getElementById('cfg-rtsp').value       = cfg.rtsp_url       || '';
+    document.getElementById('cfg-buffer').value     = cfg.buffer_minutes  || 30;
+    document.getElementById('cfg-seg').value        = cfg.segment_seconds || 2;
+    document.getElementById('cfg-rtsp-port').value  = cfg.rtsp_port       || 554;
+    document.getElementById('scan-network').value   = cfg.scan_network    || '192.168.1.0/24';
+    document.getElementById('cfg-buffer-val').textContent = (cfg.buffer_minutes || 30) + 'min';
+  } catch(e) {}
+}
+
+async function saveConfig() {
+  const body = {
+    rtsp_url:        document.getElementById('cfg-rtsp').value.trim(),
+    buffer_minutes:  parseInt(document.getElementById('cfg-buffer').value),
+    segment_seconds: parseInt(document.getElementById('cfg-seg').value),
+    rtsp_port:       parseInt(document.getElementById('cfg-rtsp-port').value),
+    scan_network:    document.getElementById('scan-network').value.trim(),
+  };
+  try {
+    await fetch(`${API}/api/config`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    toast('Config saved — recorder restarting…', 'success');
+    document.getElementById('settings-panel').style.display = 'none';
+    setTimeout(() => { startLive(); refreshStatus(); }, 2000);
+  } catch(e) {
+    toast('Failed to save config', 'error');
+  }
+}
+
+// ── Network scan ──────────────────────────────────────────────
+async function scanNetwork() {
+  const btn = document.getElementById('scan-btn');
+  const net = document.getElementById('scan-network').value.trim();
+  btn.textContent = '⏳ Scanning…';
+  btn.disabled    = true;
+
+  // Update config with chosen network first
+  await fetch(`${API}/api/config`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ scan_network: net })
+  }).catch(()=>{});
+
+  try {
+    const r    = await fetch(`${API}/api/scan`);
+    const data = await r.json();
+    renderScanResults(data.cameras || []);
+  } catch(e) {
+    toast('Scan failed — is the backend running?', 'error');
+  }
+
+  btn.textContent = '⊕ Scan network';
+  btn.disabled    = false;
+}
+
+function renderScanResults(cameras) {
+  const el = document.getElementById('scan-results');
+  if (!cameras.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:6px 0">No cameras found.</div>';
+    return;
+  }
+  el.innerHTML = cameras.map(c => `
+    <div class="camera-result" onclick="useCamera('${c.rtsp_url}')">
+      <div class="ip">${c.ip}:${c.port}
+        <span class="badge ${c.status==='rtsp_ok'?'':'warn'}">${c.status}</span>
+      </div>
+      <div class="url">${c.rtsp_url}</div>
+      ${c.streams ? c.streams.map(s=>`<div class="url">${s.codec_name||''} ${s.width||''}×${s.height||''}</div>`).join('') : ''}
+    </div>
+  `).join('');
+}
+
+function useCamera(url) {
+  document.getElementById('cfg-rtsp').value = url;
+  document.getElementById('settings-panel').style.display = 'block';
+  toast('Click "Save & restart" to activate', 'success');
+}
+
+// ── Clear buffer ──────────────────────────────────────────────
+async function clearBuffer() {
+  if (!confirm('Delete all buffered segments?')) return;
+  await fetch(`${API}/api/clear-buffer`, { method: 'POST' });
+  toast('Buffer cleared', 'success');
+  refreshStatus();
+  refreshTimeline();
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function fmtTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+}
+function fmtDateTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+function toast(msg, type='') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = `show ${type}`;
+  setTimeout(() => el.className = '', 3000);
+}
+</script>
+</body>
+</html>
