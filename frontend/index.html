@@ -510,6 +510,7 @@ function destroyWebRTC() {
   if (pc) { pc.close(); pc = null; }
   const video = document.getElementById('video');
   video.srcObject = null;
+  video.load();  // reset video element so HLS.js can attach cleanly
   setLatencyDisplay('—', 'WebRTC');
 }
 
@@ -528,7 +529,16 @@ async function startWebRTC() {
 
     const stream = new MediaStream();
     video.srcObject = stream;
-    pc.ontrack = (e) => stream.addTrack(e.track);
+
+    // play() must be called AFTER the first track arrives — not before
+    let played = false;
+    pc.ontrack = (e) => {
+      stream.addTrack(e.track);
+      if (!played) {
+        played = true;
+        video.play().catch(() => {});
+      }
+    };
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -550,8 +560,6 @@ async function startWebRTC() {
     if (!resp.ok) throw new Error(`go2rtc returned ${resp.status}`);
     const sdpAnswer = await resp.text();
     await pc.setRemoteDescription({ type: 'answer', sdp: sdpAnswer });
-
-    video.play().catch(() => {});
 
     // Start latency polling
     latencyTimer = setInterval(updateLatency, 2000);
