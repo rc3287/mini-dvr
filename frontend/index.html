@@ -481,6 +481,8 @@ function destroyHls() {
 function startHls(url) {
   const video = document.getElementById('video');
   destroyHls();
+  // ensure srcObject is cleared — HLS.js uses video.src (MSE), incompatible with srcObject
+  video.srcObject = null;
 
   if (Hls.isSupported()) {
     hls = new Hls({
@@ -509,8 +511,8 @@ function destroyWebRTC() {
   if (latencyTimer) { clearInterval(latencyTimer); latencyTimer = null; }
   if (pc) { pc.close(); pc = null; }
   const video = document.getElementById('video');
+  video.pause();
   video.srcObject = null;
-  video.load();  // reset video element so HLS.js can attach cleanly
   setLatencyDisplay('—', 'WebRTC');
 }
 
@@ -527,13 +529,11 @@ async function startWebRTC() {
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
 
-    const stream = new MediaStream();
-    video.srcObject = stream;
-
-    // play() must be called AFTER the first track arrives — not before
+    // srcObject set inside ontrack only — avoids empty-stream state blocking HLS later
     let played = false;
     pc.ontrack = (e) => {
-      stream.addTrack(e.track);
+      if (!video.srcObject) video.srcObject = new MediaStream();
+      video.srcObject.addTrack(e.track);
       if (!played) {
         played = true;
         video.play().catch(() => {});
