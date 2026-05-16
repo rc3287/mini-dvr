@@ -5,11 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Mini-DVR</title>
 
-<!-- HLS.js — used only for DVR/timeline mode -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.7/hls.min.js"></script>
 
 <style>
-/* ── Reset & Variables ─────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -34,7 +32,6 @@ html, body {
   overflow: hidden;
 }
 
-/* ── Layout ─────────────────────────────────────────────────────── */
 #app {
   display: grid;
   grid-template-rows: 44px 1fr auto auto;
@@ -45,10 +42,9 @@ html, body {
     "timeline timeline"
     "controls controls";
   height: 100vh;
-  gap: 0;
 }
 
-/* ── Header ─────────────────────────────────────────────────────── */
+/* ── Header ── */
 #header {
   grid-area: header;
   display: flex; align-items: center; gap: 14px;
@@ -56,267 +52,101 @@ html, body {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
-
-.logo {
-  font-size: 15px; font-weight: 700; letter-spacing: .08em;
-  color: var(--accent); text-transform: uppercase;
-}
+.logo { font-size: 15px; font-weight: 700; letter-spacing: .08em; color: var(--accent); text-transform: uppercase; }
 .logo span { color: var(--accent2); }
-
-.status-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--muted);
-  transition: background .4s;
-}
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background .4s; }
 .status-dot.live { background: var(--red); animation: pulse 1.2s infinite; }
 .status-dot.ok   { background: var(--green); }
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.3; }
-}
-
-#status-label {
-  font-size: 11px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase;
-}
-
-/* Latency indicator */
-#latency-wrap {
-  display: flex; align-items: center; gap: 5px;
-  padding: 3px 8px; border-radius: var(--radius);
-  background: var(--surface2); border: 1px solid var(--border);
-}
-#latency-label {
-  font-size: 9px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase;
-}
-#latency-display {
-  font-size: 11px; color: var(--accent); font-weight: 700; min-width: 36px;
-}
-#stream-mode {
-  font-size: 9px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase;
-}
-
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+#status-label { font-size: 11px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+#latency-wrap { display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: var(--radius); background: var(--surface2); border: 1px solid var(--border); }
+#latency-label { font-size: 9px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+#latency-display { font-size: 11px; color: var(--accent); font-weight: 700; min-width: 36px; }
+#stream-mode { font-size: 9px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
 .spacer { flex: 1; }
-
-.header-btn {
-  padding: 5px 12px; border-radius: var(--radius);
-  background: var(--surface2); border: 1px solid var(--border);
-  color: var(--text); cursor: pointer; font-family: var(--font);
-  font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
-  transition: all .15s;
-}
+.header-btn { padding: 5px 12px; border-radius: var(--radius); background: var(--surface2); border: 1px solid var(--border); color: var(--text); cursor: pointer; font-family: var(--font); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; transition: all .15s; }
 .header-btn:hover { border-color: var(--accent); color: var(--accent); }
 .header-btn.danger:hover { border-color: var(--red); color: var(--red); }
 
-/* ── Video Player ─────────────────────────────────────────────── */
+/* ── Player ── */
 #player-area {
   grid-area: player;
   background: #000;
-  display: flex; align-items: center; justify-content: center;
   position: relative; overflow: hidden;
 }
-
-#video {
+/* Both video elements stacked — only one visible at a time */
+.video-player {
+  position: absolute; top: 0; left: 0;
   width: 100%; height: 100%;
   object-fit: contain;
-  display: block;
 }
-
 #player-overlay {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
   pointer-events: none;
 }
-
 #dvr-badge {
   position: absolute; top: 12px; left: 12px;
   padding: 3px 10px; border-radius: 3px;
-  font-size: 11px; font-weight: 700; letter-spacing: .1em;
-  text-transform: uppercase;
+  font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
   background: var(--red); color: #fff;
-  opacity: 0;
-  transition: opacity .3s;
+  opacity: 0; transition: opacity .3s;
 }
 #dvr-badge.visible { opacity: 1; }
-
-#loading-msg {
-  color: var(--muted); font-size: 13px; letter-spacing: .05em;
-  text-align: center;
-}
+#loading-msg { color: var(--muted); font-size: 13px; letter-spacing: .05em; text-align: center; }
 #loading-msg.hidden { display: none; }
 
-/* ── Sidebar ─────────────────────────────────────────────────────── */
-#sidebar {
-  grid-area: sidebar;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  display: flex; flex-direction: column;
-  overflow-y: auto;
-}
-
-.sidebar-section {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.sidebar-title {
-  font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
-  color: var(--muted); margin-bottom: 8px;
-}
-
-.stat-row {
-  display: flex; justify-content: space-between;
-  padding: 3px 0; font-size: 12px;
-}
+/* ── Sidebar ── */
+#sidebar { grid-area: sidebar; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; }
+.sidebar-section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.sidebar-title { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.stat-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
 .stat-row .key { color: var(--muted); }
 .stat-row .val { color: var(--text); font-weight: 600; }
 .stat-row .val.green { color: var(--green); }
-.stat-row .val.red   { color: var(--red);   }
-
-/* Config form */
+.stat-row .val.red   { color: var(--red); }
 .field { margin-bottom: 8px; }
-.field label {
-  display: block; font-size: 10px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--muted); margin-bottom: 3px;
-}
-.field input, .field select {
-  width: 100%; padding: 5px 8px;
-  background: var(--bg); border: 1px solid var(--border);
-  border-radius: var(--radius); color: var(--text);
-  font-family: var(--font); font-size: 12px;
-  outline: none; transition: border-color .15s;
-}
+.field label { display: block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+.field input, .field select { width: 100%; padding: 5px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-family: var(--font); font-size: 12px; outline: none; transition: border-color .15s; }
 .field input:focus, .field select:focus { border-color: var(--accent); }
-
-.btn {
-  width: 100%; padding: 7px; border-radius: var(--radius);
-  border: 1px solid var(--border); background: var(--surface2);
-  color: var(--text); font-family: var(--font); font-size: 11px;
-  letter-spacing: .06em; text-transform: uppercase;
-  cursor: pointer; transition: all .15s; margin-top: 4px;
-}
+.btn { width: 100%; padding: 7px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: var(--font); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; transition: all .15s; margin-top: 4px; }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
 .btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700; }
 .btn.primary:hover { background: #00aacc; }
 .btn.danger:hover  { border-color: var(--red); color: var(--red); }
-
-/* Scan results */
-#scan-results {
-  max-height: 160px; overflow-y: auto; margin-top: 6px;
-}
-.camera-result {
-  padding: 6px 8px; border-radius: var(--radius);
-  background: var(--bg); border: 1px solid var(--border);
-  margin-bottom: 4px; cursor: pointer;
-  transition: border-color .15s;
-}
+#scan-results { max-height: 160px; overflow-y: auto; margin-top: 6px; }
+.camera-result { padding: 6px 8px; border-radius: var(--radius); background: var(--bg); border: 1px solid var(--border); margin-bottom: 4px; cursor: pointer; transition: border-color .15s; }
 .camera-result:hover { border-color: var(--accent); }
 .camera-result .ip { color: var(--accent); font-weight: 700; font-size: 12px; }
 .camera-result .url { color: var(--muted); font-size: 10px; word-break: break-all; }
-.camera-result .badge {
-  display: inline-block; padding: 1px 5px; border-radius: 3px;
-  font-size: 9px; text-transform: uppercase; font-weight: 700;
-  background: var(--green); color: var(--bg); margin-left: 6px;
-}
+.camera-result .badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 9px; text-transform: uppercase; font-weight: 700; background: var(--green); color: var(--bg); margin-left: 6px; }
 .camera-result .badge.warn { background: var(--accent2); }
 
-/* ── Timeline ─────────────────────────────────────────────────────── */
-#timeline-area {
-  grid-area: timeline;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  padding: 10px 16px 6px;
-  user-select: none;
-}
+/* ── Timeline ── */
+#timeline-area { grid-area: timeline; background: var(--surface); border-top: 1px solid var(--border); padding: 10px 16px 6px; user-select: none; }
+#timeline-label { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+#timeline-wrap { position: relative; height: 32px; background: var(--bg); border-radius: var(--radius); border: 1px solid var(--border); cursor: crosshair; overflow: hidden; }
+#timeline-fill { position: absolute; left: 0; top: 0; height: 100%; background: linear-gradient(90deg, #00d4ff22, #00d4ff44); border-right: 2px solid var(--accent); transition: width .2s; }
+#timeline-cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent2); pointer-events: none; display: none; }
+#timeline-time-label { position: absolute; top: 50%; transform: translateY(-50%); background: var(--accent2); color: var(--bg); padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 700; pointer-events: none; display: none; white-space: nowrap; }
+#timeline-ticks { display: flex; justify-content: space-between; padding: 2px 0; font-size: 9px; color: var(--muted); letter-spacing: .03em; }
 
-#timeline-label {
-  font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
-  color: var(--muted); margin-bottom: 6px; display: flex;
-  justify-content: space-between; align-items: center;
-}
-
-#timeline-wrap {
-  position: relative; height: 32px;
-  background: var(--bg); border-radius: var(--radius);
-  border: 1px solid var(--border);
-  cursor: crosshair; overflow: hidden;
-}
-
-#timeline-fill {
-  position: absolute; left: 0; top: 0; height: 100%;
-  background: linear-gradient(90deg, #00d4ff22, #00d4ff44);
-  border-right: 2px solid var(--accent);
-  transition: width .2s;
-}
-
-#timeline-cursor {
-  position: absolute; top: 0; bottom: 0; width: 2px;
-  background: var(--accent2);
-  pointer-events: none; display: none;
-}
-
-#timeline-time-label {
-  position: absolute; top: 50%; transform: translateY(-50%);
-  background: var(--accent2); color: var(--bg);
-  padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 700;
-  pointer-events: none; display: none; white-space: nowrap;
-}
-
-/* tick marks */
-#timeline-ticks {
-  display: flex; justify-content: space-between;
-  padding: 2px 0; font-size: 9px; color: var(--muted);
-  letter-spacing: .03em;
-}
-
-/* ── Controls ─────────────────────────────────────────────────────── */
-#controls {
-  grid-area: controls;
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 16px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-}
-
-.ctrl-btn {
-  padding: 6px 14px; border-radius: var(--radius);
-  border: 1px solid var(--border); background: var(--surface2);
-  color: var(--text); font-family: var(--font); font-size: 11px;
-  text-transform: uppercase; letter-spacing: .06em;
-  cursor: pointer; transition: all .15s;
-}
+/* ── Controls ── */
+#controls { grid-area: controls; display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--surface); border-top: 1px solid var(--border); }
+.ctrl-btn { padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: var(--font); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; cursor: pointer; transition: all .15s; }
 .ctrl-btn:hover { border-color: var(--accent); color: var(--accent); }
-.ctrl-btn.live-btn {
-  background: var(--red); border-color: var(--red); color: #fff; font-weight: 700;
-}
+.ctrl-btn.live-btn { background: var(--red); border-color: var(--red); color: #fff; font-weight: 700; }
 .ctrl-btn.live-btn:hover { background: #cc2222; }
 .ctrl-btn:disabled { opacity: .4; cursor: not-allowed; }
 .ctrl-btn.step-btn { letter-spacing: .02em; }
+#current-time-display { font-size: 13px; color: var(--accent); letter-spacing: .06em; min-width: 160px; }
+#buffer-info { margin-left: auto; font-size: 10px; color: var(--muted); letter-spacing: .04em; }
 
-#current-time-display {
-  font-size: 13px; color: var(--accent); letter-spacing: .06em;
-  min-width: 160px;
-}
-
-#buffer-info {
-  margin-left: auto; font-size: 10px; color: var(--muted); letter-spacing: .04em;
-}
-
-/* ── Scrollbar ─────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
-/* ── Modal / Toast ─────────────────────────────────────────────────── */
-#toast {
-  position: fixed; bottom: 20px; right: 20px;
-  padding: 10px 18px; border-radius: var(--radius);
-  background: var(--surface2); border: 1px solid var(--border);
-  color: var(--text); font-size: 12px;
-  opacity: 0; pointer-events: none;
-  transition: opacity .3s;
-  z-index: 100;
-}
+#toast { position: fixed; bottom: 20px; right: 20px; padding: 10px 18px; border-radius: var(--radius); background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-size: 12px; opacity: 0; pointer-events: none; transition: opacity .3s; z-index: 100; }
 #toast.show { opacity: 1; }
 #toast.error { border-color: var(--red); color: var(--red); }
 #toast.success { border-color: var(--green); color: var(--green); }
@@ -331,7 +161,6 @@ html, body {
     <div class="logo">Mini<span>-</span>DVR</div>
     <div class="status-dot" id="status-dot"></div>
     <div id="status-label">Connecting…</div>
-    <!-- Latency indicator -->
     <div id="latency-wrap">
       <span id="stream-mode">WebRTC</span>
       <span id="latency-label">latency</span>
@@ -342,9 +171,10 @@ html, body {
     <button class="header-btn danger" onclick="clearBuffer()">⊗ Clear buffer</button>
   </header>
 
-  <!-- ── Player ── -->
+  <!-- ── Player : deux <video>, un seul visible ── -->
   <div id="player-area">
-    <video id="video" playsinline autoplay muted></video>
+    <video id="video-webrtc" class="video-player" playsinline autoplay muted></video>
+    <video id="video-hls"    class="video-player" playsinline autoplay muted style="display:none"></video>
     <div id="player-overlay">
       <div id="loading-msg">
         No RTSP source configured.<br>
@@ -356,8 +186,6 @@ html, body {
 
   <!-- ── Sidebar ── -->
   <aside id="sidebar">
-
-    <!-- Status -->
     <div class="sidebar-section">
       <div class="sidebar-title">Status</div>
       <div class="stat-row"><span class="key">Recording</span><span class="val" id="rec-status">—</span></div>
@@ -366,8 +194,6 @@ html, body {
       <div class="stat-row"><span class="key">RTSP URL</span></div>
       <div style="color:var(--accent);font-size:10px;word-break:break-all;margin-top:2px" id="rtsp-display">—</div>
     </div>
-
-    <!-- Network scan -->
     <div class="sidebar-section">
       <div class="sidebar-title">Camera Discovery</div>
       <div class="field">
@@ -377,8 +203,6 @@ html, body {
       <button class="btn" onclick="scanNetwork()" id="scan-btn">⊕ Scan network</button>
       <div id="scan-results"></div>
     </div>
-
-    <!-- Settings (hidden by default, toggled) -->
     <div class="sidebar-section" id="settings-panel" style="display:none">
       <div class="sidebar-title">Configuration</div>
       <div class="field">
@@ -405,7 +229,6 @@ html, body {
       </div>
       <button class="btn primary" onclick="saveConfig()">✓ Save & restart</button>
     </div>
-
   </aside>
 
   <!-- ── Timeline ── -->
@@ -429,155 +252,125 @@ html, body {
   <div id="controls">
     <button class="ctrl-btn live-btn" onclick="goLive()" id="live-btn">▶ LIVE</button>
     <button class="ctrl-btn" onclick="playPause()" id="pp-btn">⏸ Pause</button>
-    <button class="ctrl-btn step-btn" onclick="stepBack()" id="back-btn" title="Image précédente (←)">◀ img</button>
-    <button class="ctrl-btn step-btn" onclick="stepForward()" id="fwd-btn" title="Image suivante (→)" disabled>img ▶</button>
+    <button class="ctrl-btn step-btn" onclick="stepBack()"    id="back-btn" title="Image précédente (←)">◀ img</button>
+    <button class="ctrl-btn step-btn" onclick="stepForward()" id="fwd-btn"  title="Image suivante (→)" disabled>img ▶</button>
     <div id="current-time-display">—</div>
     <div id="buffer-info">Buffer: — / —</div>
   </div>
 
-</div><!-- #app -->
+</div>
 
 <div id="toast"></div>
 
 <script>
 /* ═══════════════════════════════════════════════════════════════
-   Mini-DVR Frontend — v2.0.0
-   Live: WebRTC via go2rtc  |  DVR/timeline: HLS via FFmpeg
+   Mini-DVR Frontend — v2.0.1
+   Live  : WebRTC  → <video id="video-webrtc">
+   DVR   : HLS.js  → <video id="video-hls">
    ═══════════════════════════════════════════════════════════════ */
 
-const API = '';           // same origin
-let hls   = null;         // HLS.js instance (DVR only)
-let pc    = null;         // RTCPeerConnection (live WebRTC)
-let latencyTimer = null;  // setInterval for WebRTC stats
-let mode  = 'live';       // 'live' | 'dvr'
+const API = '';
+
+// ── State ─────────────────────────────────────────────────────
+let hlsInstance  = null;   // HLS.js instance (DVR)
+let rtcPc        = null;   // RTCPeerConnection (Live)
+let latencyTimer = null;
+let currentMode  = 'live'; // 'live' | 'dvr'
+
 let statusInterval   = null;
 let timelineInterval = null;
-
-// Buffer metadata
 let bufferOldest = null;
 let bufferNewest = null;
 let bufferSegs   = [];
+let dvrPosition  = null;
 
-// Currently playing position (DVR mode)
-let dvrPosition = null;
+const FPS   = 25;
+const FRAME = 1 / FPS;
 
 // ── Init ──────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   loadConfig();
-  startLive();
+  switchToLive();
   statusInterval   = setInterval(refreshStatus, 3000);
   timelineInterval = setInterval(refreshTimeline, 5000);
   refreshStatus();
   refreshTimeline();
 });
 
-// ════════════════════════════════════════════════════════════════
-// HLS helpers (DVR only)
-// ════════════════════════════════════════════════════════════════
-function destroyHls() {
-  if (hls) { hls.destroy(); hls = null; }
-}
+// ══════════════════════════════════════════════════════════════
+// LIVE mode — WebRTC via go2rtc
+// ══════════════════════════════════════════════════════════════
+async function switchToLive() {
+  // 1. Détruire HLS
+  if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
 
-function startHls(url) {
-  const video = document.getElementById('video');
-  destroyHls();
-  // ensure srcObject is cleared — HLS.js uses video.src (MSE), incompatible with srcObject
-  video.srcObject = null;
+  // 2. Cacher video-hls, montrer video-webrtc
+  document.getElementById('video-hls').style.display    = 'none';
+  document.getElementById('video-webrtc').style.display = 'block';
 
-  if (Hls.isSupported()) {
-    hls = new Hls({
-      liveSyncDurationCount:       2,
-      liveMaxLatencyDurationCount: 4,
-      maxBufferLength:             30,
-      manifestLoadingMaxRetry:     20,
-      lowLatencyMode:              false,
-    });
-    hls.loadSource(url);
-    hls.attachMedia(video);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
-    hls.on(Hls.Events.ERROR, (_, d) => {
-      if (d.fatal) { console.warn('HLS fatal', d.type, d.details); }
-    });
-  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    video.src = url;
-    video.play();
-  }
-}
-
-// ════════════════════════════════════════════════════════════════
-// WebRTC helpers (live only)
-// ════════════════════════════════════════════════════════════════
-function destroyWebRTC() {
+  // 3. Fermer la connexion WebRTC existante proprement
   if (latencyTimer) { clearInterval(latencyTimer); latencyTimer = null; }
-  if (pc) { pc.close(); pc = null; }
-  const video = document.getElementById('video');
-  video.pause();
-  video.srcObject = null;
+  if (rtcPc) { rtcPc.close(); rtcPc = null; }
+
+  // 4. UI
+  currentMode = 'live';
+  document.getElementById('dvr-badge').classList.remove('visible');
+  document.getElementById('live-btn').style.opacity = '.4';
+  document.getElementById('fwd-btn').disabled = true;
+  document.getElementById('pp-btn').textContent = '⏸ Pause';
+  document.getElementById('loading-msg').classList.add('hidden');
   setLatencyDisplay('—', 'WebRTC');
+
+  // 5. Nouvelle connexion WebRTC
+  await initWebRTC();
 }
 
-async function startWebRTC() {
-  const video = document.getElementById('video');
-  destroyHls();
-  destroyWebRTC();
+async function goLive() {
+  await switchToLive();
+  toast('Switched to LIVE', 'success');
+}
 
+async function initWebRTC() {
+  const video = document.getElementById('video-webrtc');
   try {
-    pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
+    const pc = new RTCPeerConnection();
+    rtcPc = pc;
 
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
 
-    // srcObject set inside ontrack only — avoids empty-stream state blocking HLS later
-    let played = false;
     pc.ontrack = (e) => {
-      if (!video.srcObject) video.srcObject = new MediaStream();
-      video.srcObject.addTrack(e.track);
-      if (!played) {
-        played = true;
-        video.play().catch(() => {});
+      if (video.srcObject !== e.streams[0]) {
+        video.srcObject = e.streams[0];
       }
     };
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    // Wait for ICE gathering (max 3 s)
-    await new Promise(resolve => {
-      if (pc.iceGatheringState === 'complete') { resolve(); return; }
-      const check = () => { if (pc.iceGatheringState === 'complete') resolve(); };
-      pc.addEventListener('icegatheringstatechange', check);
-      setTimeout(resolve, 3000);
-    });
-
-    const resp = await fetch(`${API}/api/webrtc?src=camera`, {
+    const resp = await fetch('http://localhost:1984/api/webrtc?src=camera', {
       method:  'POST',
-      body:    pc.localDescription.sdp,
+      body:    offer.sdp,
       headers: { 'Content-Type': 'application/sdp' },
     });
+    if (!resp.ok) throw new Error(`go2rtc HTTP ${resp.status}`);
 
-    if (!resp.ok) throw new Error(`go2rtc returned ${resp.status}`);
-    const sdpAnswer = await resp.text();
-    await pc.setRemoteDescription({ type: 'answer', sdp: sdpAnswer });
+    const sdp = await resp.text();
+    await pc.setRemoteDescription({ type: 'answer', sdp });
 
-    // Start latency polling
     latencyTimer = setInterval(updateLatency, 2000);
-    setLatencyDisplay('—', 'WebRTC');
 
-  } catch (e) {
-    console.warn('[WebRTC] failed, falling back to HLS:', e);
-    toast('WebRTC unavailable — HLS fallback', 'error');
-    destroyWebRTC();
-    setLatencyDisplay('HLS', 'HLS');
-    startHls(`${API}/api/live.m3u8`);
+  } catch (err) {
+    console.warn('[WebRTC] failed:', err);
+    toast('WebRTC unavailable: ' + err.message, 'error');
+    setLatencyDisplay('—', '—');
   }
 }
 
 async function updateLatency() {
-  if (!pc) return;
+  if (!rtcPc) return;
   try {
-    const stats = await pc.getStats();
+    const stats = await rtcPc.getStats();
     let delayMs = null;
     stats.forEach(r => {
       if (r.type === 'inbound-rtp' && r.kind === 'video') {
@@ -587,81 +380,71 @@ async function updateLatency() {
       }
     });
     setLatencyDisplay(delayMs != null ? `${delayMs}ms` : '—', 'WebRTC');
-  } catch (e) {}
+  } catch (_) {}
 }
 
-function setLatencyDisplay(value, streamMode) {
-  const el = document.getElementById('latency-display');
-  const sm = document.getElementById('stream-mode');
-  if (el) el.textContent = value;
-  if (sm) sm.textContent = streamMode;
-}
+// ══════════════════════════════════════════════════════════════
+// DVR mode — HLS.js
+// ══════════════════════════════════════════════════════════════
+async function switchToDvr(ts) {
+  // 1. Fermer WebRTC
+  if (latencyTimer) { clearInterval(latencyTimer); latencyTimer = null; }
+  if (rtcPc) { rtcPc.close(); rtcPc = null; }
 
-// ════════════════════════════════════════════════════════════════
-// Live mode (WebRTC)
-// ════════════════════════════════════════════════════════════════
-function startLive() {
-  mode = 'live';
-  document.getElementById('dvr-badge').classList.remove('visible');
-  document.getElementById('live-btn').style.opacity = '.4';
-  document.getElementById('pp-btn').textContent = '⏸ Pause';
-  document.getElementById('loading-msg').classList.add('hidden');
-  startWebRTC();
-}
+  // 2. Cacher video-webrtc, montrer video-hls
+  document.getElementById('video-webrtc').style.display = 'none';
+  document.getElementById('video-hls').style.display    = 'block';
 
-function goLive() {
-  startLive();
-  document.getElementById('fwd-btn').disabled = true;
-  toast('Switched to LIVE (WebRTC)', 'success');
-}
+  // 3. Détruire l'instance HLS précédente
+  if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
 
-// ════════════════════════════════════════════════════════════════
-// DVR mode (HLS)
-// ════════════════════════════════════════════════════════════════
-const FPS   = 25;
-const FRAME = 1 / FPS;
-
-function seekTo(ts) {
-  mode = 'dvr';
+  // 4. UI
+  currentMode = 'dvr';
   dvrPosition = ts;
   document.getElementById('dvr-badge').classList.add('visible');
   document.getElementById('live-btn').style.opacity = '1';
   document.getElementById('fwd-btn').disabled = false;
-
-  // Stop WebRTC, switch to HLS for DVR
-  destroyWebRTC();
   setLatencyDisplay('HLS', 'DVR');
 
-  const to = bufferNewest || (ts + 300);
-  startHls(`${API}/api/clip.m3u8?from_time=${ts}&to_time=${to}`);
-}
+  // 5. Charger le clip via HLS.js
+  const to     = bufferNewest || (ts + 300);
+  const url    = `${API}/api/clip.m3u8?from_time=${ts}&to_time=${to}`;
+  const video  = document.getElementById('video-hls');
 
-function stepBack() {
-  if (mode !== 'dvr') return;
-  const video = document.getElementById('video');
-  pauseForStep(video);
-  video.currentTime = Math.max(0, video.currentTime - FRAME);
-  updateFrameDisplay(video);
-}
-
-function stepForward() {
-  if (mode !== 'dvr') return;
-  const video = document.getElementById('video');
-  pauseForStep(video);
-  video.currentTime += FRAME;
-  updateFrameDisplay(video);
-}
-
-function pauseForStep(video) {
-  if (!video.paused) {
-    video.pause();
-    document.getElementById('pp-btn').textContent = '▶ Play';
+  if (Hls.isSupported()) {
+    hlsInstance = new Hls({ maxBufferLength: 60, manifestLoadingMaxRetry: 3 });
+    hlsInstance.attachMedia(video);
+    hlsInstance.loadSource(url);
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+      video.play().catch(err => console.warn('[HLS] play():', err));
+    });
+    hlsInstance.on(Hls.Events.ERROR, (_, d) => {
+      console.warn('[HLS] error', d.type, d.details, 'fatal:', d.fatal);
+      if (d.fatal) toast('HLS error — ' + d.details, 'error');
+    });
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = url;
+    video.play().catch(err => console.warn('[HLS native] play():', err));
   }
 }
 
-function updateFrameDisplay(video) {
-  const absTs = dvrPosition + video.currentTime;
-  document.getElementById('current-time-display').textContent = '⏸ DVR – ' + fmtDateTime(absTs);
+// ── Step navigation (DVR only) ────────────────────────────────
+function stepBack() {
+  if (currentMode !== 'dvr') return;
+  const video = document.getElementById('video-hls');
+  if (!video.paused) { video.pause(); document.getElementById('pp-btn').textContent = '▶ Play'; }
+  video.currentTime = Math.max(0, video.currentTime - FRAME);
+  document.getElementById('current-time-display').textContent =
+    '⏸ DVR – ' + fmtDateTime(dvrPosition + video.currentTime);
+}
+
+function stepForward() {
+  if (currentMode !== 'dvr') return;
+  const video = document.getElementById('video-hls');
+  if (!video.paused) { video.pause(); document.getElementById('pp-btn').textContent = '▶ Play'; }
+  video.currentTime += FRAME;
+  document.getElementById('current-time-display').textContent =
+    '⏸ DVR – ' + fmtDateTime(dvrPosition + video.currentTime);
 }
 
 document.addEventListener('keydown', (e) => {
@@ -669,48 +452,46 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight') { e.preventDefault(); stepForward(); }
 });
 
-// ── Play/pause toggle ─────────────────────────────────────────
+// ── Play / pause ──────────────────────────────────────────────
 function playPause() {
-  const v   = document.getElementById('video');
+  const video = currentMode === 'live'
+    ? document.getElementById('video-webrtc')
+    : document.getElementById('video-hls');
   const btn = document.getElementById('pp-btn');
-  if (v.paused) { v.play();  btn.textContent = '⏸ Pause'; }
-  else          { v.pause(); btn.textContent = '▶ Play';  }
+  if (video.paused) { video.play().catch(() => {}); btn.textContent = '⏸ Pause'; }
+  else              { video.pause();                btn.textContent = '▶ Play';  }
 }
 
 // ── Status polling ─────────────────────────────────────────────
 async function refreshStatus() {
   try {
-    const r   = await fetch(`${API}/api/status`);
-    const d   = await r.json();
+    const r = await fetch(`${API}/api/status`);
+    const d = await r.json();
     bufferOldest = d.oldest_segment_time;
     bufferNewest = d.newest_segment_time;
 
     const dot   = document.getElementById('status-dot');
     const label = document.getElementById('status-label');
     if (d.recording) {
-      dot.className = 'status-dot live';
-      label.textContent = 'Recording';
+      dot.className = 'status-dot live'; label.textContent = 'Recording';
     } else {
-      dot.className = 'status-dot';
-      label.textContent = d.rtsp_url ? 'Stopped' : 'No source';
+      dot.className = 'status-dot'; label.textContent = d.rtsp_url ? 'Stopped' : 'No source';
     }
 
     document.getElementById('rec-status').textContent = d.recording ? '● REC' : '○ Stopped';
-    document.getElementById('rec-status').className    = 'val ' + (d.recording ? 'red' : '');
+    document.getElementById('rec-status').className   = 'val ' + (d.recording ? 'red' : '');
     document.getElementById('seg-count').textContent  = d.segment_count;
     document.getElementById('rtsp-display').textContent = d.rtsp_url || 'Not set';
 
-    const dur = d.buffer_duration_seconds;
+    const dur    = d.buffer_duration_seconds;
     const durStr = dur >= 60 ? `${Math.floor(dur/60)}m ${dur%60}s` : `${dur}s`;
-    document.getElementById('buf-dur').textContent    = durStr;
-    document.getElementById('buffer-info').textContent =
-      `Buffer: ${durStr} / ${d.buffer_minutes}min`;
+    document.getElementById('buf-dur').textContent   = durStr;
+    document.getElementById('buffer-info').textContent = `Buffer: ${durStr} / ${d.buffer_minutes}min`;
 
-    if (mode === 'live') {
-      document.getElementById('current-time-display').textContent = '▶ LIVE – ' + fmtTime(Date.now()/1000);
+    if (currentMode === 'live') {
+      document.getElementById('current-time-display').textContent = '▶ LIVE – ' + fmtTime(Date.now() / 1000);
     }
-
-  } catch(e) {
+  } catch (_) {
     document.getElementById('status-dot').className = 'status-dot';
     document.getElementById('status-label').textContent = 'API unreachable';
   }
@@ -723,53 +504,47 @@ async function refreshTimeline() {
     const data = await r.json();
     bufferSegs = data.segments || [];
     renderTimeline();
-  } catch(e) {}
+  } catch (_) {}
 }
 
 function renderTimeline() {
   if (!bufferSegs.length) return;
-
-  const oldest = bufferSegs[0].mtime;
-  const newest = bufferSegs[bufferSegs.length - 1].mtime;
-  bufferOldest = oldest;
-  bufferNewest = newest;
-
+  const oldest   = bufferSegs[0].mtime;
+  const newest   = bufferSegs[bufferSegs.length - 1].mtime;
+  bufferOldest   = oldest;
+  bufferNewest   = newest;
   const totalSec = newest - oldest || 1;
-  document.getElementById('timeline-fill').style.width = '100%';
 
-  document.getElementById('timeline-range-label').textContent =
-    fmtTime(oldest) + ' → ' + fmtTime(newest);
+  document.getElementById('timeline-fill').style.width = '100%';
+  document.getElementById('timeline-range-label').textContent = fmtTime(oldest) + ' → ' + fmtTime(newest);
 
   const stepMin = totalSec <= 600 ? 1 : totalSec <= 1800 ? 5 : 10;
   const ticksEl = document.getElementById('timeline-ticks');
   ticksEl.innerHTML = '';
+  ticksEl.style.position = 'relative';
+  ticksEl.style.height   = '14px';
   for (let t = oldest; t <= newest; t += stepMin * 60) {
     const frac = (t - oldest) / totalSec;
     const span = document.createElement('span');
-    span.style.position   = 'absolute';
-    span.style.left       = (frac * 100) + '%';
-    span.style.transform  = 'translateX(-50%)';
+    span.style.cssText = `position:absolute;left:${frac*100}%;transform:translateX(-50%)`;
     span.textContent = fmtTime(t);
     ticksEl.appendChild(span);
   }
-  ticksEl.style.position = 'relative';
-  ticksEl.style.height   = '14px';
 }
 
 function timelineHover(e) {
   if (!bufferOldest || !bufferNewest) return;
-  const wrap   = document.getElementById('timeline-wrap');
-  const cursor = document.getElementById('timeline-cursor');
-  const tlabel = document.getElementById('timeline-time-label');
-  const rect   = wrap.getBoundingClientRect();
-  const frac   = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-  const ts     = bufferOldest + frac * (bufferNewest - bufferOldest);
-
-  cursor.style.left    = (frac * 100) + '%';
-  cursor.style.display = 'block';
-  tlabel.style.left    = Math.min(frac * 100, 90) + '%';
-  tlabel.style.display = 'block';
-  tlabel.textContent   = fmtDateTime(ts);
+  const wrap  = document.getElementById('timeline-wrap');
+  const rect  = wrap.getBoundingClientRect();
+  const frac  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const ts    = bufferOldest + frac * (bufferNewest - bufferOldest);
+  const cur   = document.getElementById('timeline-cursor');
+  const tlbl  = document.getElementById('timeline-time-label');
+  cur.style.left    = (frac * 100) + '%';
+  cur.style.display = 'block';
+  tlbl.style.left    = Math.min(frac * 100, 90) + '%';
+  tlbl.style.display = 'block';
+  tlbl.textContent   = fmtDateTime(ts);
 }
 
 function timelineLeave() {
@@ -777,33 +552,41 @@ function timelineLeave() {
   document.getElementById('timeline-time-label').style.display = 'none';
 }
 
-function timelineClick(e) {
+async function timelineClick(e) {
   if (!bufferOldest || !bufferNewest) return;
+
+  const status = await fetch(`${API}/api/status`).then(r => r.json()).catch(() => null);
+  if (!status || status.segment_count === 0) {
+    toast('Buffer vide — attends quelques secondes', 'error');
+    return;
+  }
+
   const wrap = document.getElementById('timeline-wrap');
   const rect = wrap.getBoundingClientRect();
   const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
   const ts   = bufferOldest + frac * (bufferNewest - bufferOldest);
-  seekTo(ts);
+
+  await switchToDvr(ts);
   document.getElementById('current-time-display').textContent = '⏪ DVR – ' + fmtDateTime(ts);
 }
 
-// ── Settings panel ────────────────────────────────────────────
+// ── Settings ──────────────────────────────────────────────────
 function openSettings() {
-  const panel = document.getElementById('settings-panel');
-  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  const p = document.getElementById('settings-panel');
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
 }
 
 async function loadConfig() {
   try {
     const r   = await fetch(`${API}/api/config`);
     const cfg = await r.json();
-    document.getElementById('cfg-rtsp').value       = cfg.rtsp_url       || '';
-    document.getElementById('cfg-buffer').value     = cfg.buffer_minutes  || 30;
-    document.getElementById('cfg-seg').value        = cfg.segment_seconds || 2;
-    document.getElementById('cfg-rtsp-port').value  = cfg.rtsp_port       || 554;
-    document.getElementById('scan-network').value   = cfg.scan_network    || '192.168.1.0/24';
+    document.getElementById('cfg-rtsp').value      = cfg.rtsp_url       || '';
+    document.getElementById('cfg-buffer').value    = cfg.buffer_minutes  || 30;
+    document.getElementById('cfg-seg').value       = cfg.segment_seconds || 2;
+    document.getElementById('cfg-rtsp-port').value = cfg.rtsp_port       || 554;
+    document.getElementById('scan-network').value  = cfg.scan_network    || '192.168.1.0/24';
     document.getElementById('cfg-buffer-val').textContent = (cfg.buffer_minutes || 30) + 'min';
-  } catch(e) {}
+  } catch (_) {}
 }
 
 async function saveConfig() {
@@ -816,13 +599,13 @@ async function saveConfig() {
   };
   try {
     await fetch(`${API}/api/config`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(body)
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
     toast('Config saved — recorder restarting…', 'success');
     document.getElementById('settings-panel').style.display = 'none';
-    setTimeout(() => { startLive(); refreshStatus(); }, 2000);
-  } catch(e) {
+    setTimeout(() => { switchToLive(); refreshStatus(); }, 2000);
+  } catch (_) {
     toast('Failed to save config', 'error');
   }
 }
@@ -831,24 +614,18 @@ async function saveConfig() {
 async function scanNetwork() {
   const btn = document.getElementById('scan-btn');
   const net = document.getElementById('scan-network').value.trim();
-  btn.textContent = '⏳ Scanning…';
-  btn.disabled    = true;
-
+  btn.textContent = '⏳ Scanning…'; btn.disabled = true;
   await fetch(`${API}/api/config`, {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ scan_network: net })
-  }).catch(()=>{});
-
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scan_network: net }),
+  }).catch(() => {});
   try {
-    const r    = await fetch(`${API}/api/scan`);
-    const data = await r.json();
+    const data = await fetch(`${API}/api/scan`).then(r => r.json());
     renderScanResults(data.cameras || []);
-  } catch(e) {
+  } catch (_) {
     toast('Scan failed — is the backend running?', 'error');
   }
-
-  btn.textContent = '⊕ Scan network';
-  btn.disabled    = false;
+  btn.textContent = '⊕ Scan network'; btn.disabled = false;
 }
 
 function renderScanResults(cameras) {
@@ -860,12 +637,11 @@ function renderScanResults(cameras) {
   el.innerHTML = cameras.map(c => `
     <div class="camera-result" onclick="useCamera('${c.rtsp_url}')">
       <div class="ip">${c.ip}:${c.port}
-        <span class="badge ${c.status==='rtsp_ok'?'':'warn'}">${c.status}</span>
+        <span class="badge ${c.status === 'rtsp_ok' ? '' : 'warn'}">${c.status}</span>
       </div>
       <div class="url">${c.rtsp_url}</div>
-      ${c.streams ? c.streams.map(s=>`<div class="url">${s.codec_name||''} ${s.width||''}×${s.height||''}</div>`).join('') : ''}
-    </div>
-  `).join('');
+      ${c.streams ? c.streams.map(s => `<div class="url">${s.codec_name||''} ${s.width||''}×${s.height||''}</div>`).join('') : ''}
+    </div>`).join('');
 }
 
 function useCamera(url) {
@@ -874,7 +650,6 @@ function useCamera(url) {
   toast('Click "Save & restart" to activate', 'success');
 }
 
-// ── Clear buffer ──────────────────────────────────────────────
 async function clearBuffer() {
   if (!confirm('Delete all buffered segments?')) return;
   await fetch(`${API}/api/clear-buffer`, { method: 'POST' });
@@ -885,17 +660,21 @@ async function clearBuffer() {
 
 // ── Helpers ───────────────────────────────────────────────────
 function fmtTime(ts) {
-  const d = new Date(ts * 1000);
-  return d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+  return new Date(ts * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 function fmtDateTime(ts) {
-  const d = new Date(ts * 1000);
-  const base = d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
-  const cs = Math.floor((ts * 100) % 100).toString().padStart(2, '0');
+  const d    = new Date(ts * 1000);
+  const base = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const cs   = Math.floor((ts * 100) % 100).toString().padStart(2, '0');
   return `${base}.${cs}`;
 }
-
-function toast(msg, type='') {
+function setLatencyDisplay(value, streamMode) {
+  const el = document.getElementById('latency-display');
+  const sm = document.getElementById('stream-mode');
+  if (el) el.textContent = value;
+  if (sm) sm.textContent = streamMode;
+}
+function toast(msg, type = '') {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.className   = `show ${type}`;
