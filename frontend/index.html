@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Mini-DVR</title>
 
-<!-- HLS.js for in-browser HLS playback -->
+<!-- HLS.js — used only for DVR/timeline mode -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.7/hls.min.js"></script>
 
 <style>
@@ -78,6 +78,22 @@ html, body {
 
 #status-label {
   font-size: 11px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase;
+}
+
+/* Latency indicator */
+#latency-wrap {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 8px; border-radius: var(--radius);
+  background: var(--surface2); border: 1px solid var(--border);
+}
+#latency-label {
+  font-size: 9px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase;
+}
+#latency-display {
+  font-size: 11px; color: var(--accent); font-weight: 700; min-width: 36px;
+}
+#stream-mode {
+  font-size: 9px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase;
 }
 
 .spacer { flex: 1; }
@@ -315,6 +331,12 @@ html, body {
     <div class="logo">Mini<span>-</span>DVR</div>
     <div class="status-dot" id="status-dot"></div>
     <div id="status-label">Connecting…</div>
+    <!-- Latency indicator -->
+    <div id="latency-wrap">
+      <span id="stream-mode">WebRTC</span>
+      <span id="latency-label">latency</span>
+      <span id="latency-display">—</span>
+    </div>
     <div class="spacer"></div>
     <button class="header-btn" onclick="openSettings()">⚙ Settings</button>
     <button class="header-btn danger" onclick="clearBuffer()">⊗ Clear buffer</button>
@@ -419,22 +441,25 @@ html, body {
 
 <script>
 /* ═══════════════════════════════════════════════════════════════
-   Mini-DVR Frontend
+   Mini-DVR Frontend — v2.0.0
+   Live: WebRTC via go2rtc  |  DVR/timeline: HLS via FFmpeg
    ═══════════════════════════════════════════════════════════════ */
 
-const API   = '';          // same origin
-let hls     = null;
-let mode    = 'live';      // 'live' | 'dvr'
-let statusInterval  = null;
+const API = '';           // same origin
+let hls   = null;         // HLS.js instance (DVR only)
+let pc    = null;         // RTCPeerConnection (live WebRTC)
+let latencyTimer = null;  // setInterval for WebRTC stats
+let mode  = 'live';       // 'live' | 'dvr'
+let statusInterval   = null;
 let timelineInterval = null;
 
 // Buffer metadata
-let bufferOldest = null;   // Unix timestamp
+let bufferOldest = null;
 let bufferNewest = null;
 let bufferSegs   = [];
 
-// Currently playing position (for DVR mode)
-let dvrPosition  = null;   // Unix timestamp
+// Currently playing position (DVR mode)
+let dvrPosition = null;
 
 // ── Init ──────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
@@ -446,7 +471,9 @@ window.addEventListener('DOMContentLoaded', () => {
   refreshTimeline();
 });
 
-// ── HLS helpers ───────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+// HLS helpers (DVR only)
+// ════════════════════════════════════════════════════════════════
 function destroyHls() {
   if (hls) { hls.destroy(); hls = null; }
 }
@@ -475,23 +502,114 @@ function startHls(url) {
   }
 }
 
-// ── Live mode ─────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+// WebRTC helpers (live only)
+// ════════════════════════════════════════════════════════════════
+function destroyWebRTC() {
+  if (latencyTimer) { clearInterval(latencyTimer); latencyTimer = null; }
+  if (pc) { pc.close(); pc = null; }
+  const video = document.getElementById('video');
+  video.srcObject = null;
+  setLatencyDisplay('—', 'WebRTC');
+}
+
+async function startWebRTC() {
+  const video = document.getElementById('video');
+  destroyHls();
+  destroyWebRTC();
+
+  try {
+    pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    });
+
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    pc.addTransceiver('audio', { direction: 'recvonly' });
+
+    const stream = new MediaStream();
+    video.srcObject = stream;
+    pc.ontrack = (e) => stream.addTrack(e.track);
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    // Wait for ICE gathering (max 3 s)
+    await new Promise(resolve => {
+      if (pc.iceGatheringState === 'complete') { resolve(); return; }
+      const check = () => { if (pc.iceGatheringState === 'complete') resolve(); };
+      pc.addEventListener('icegatheringstatechange', check);
+      setTimeout(resolve, 3000);
+    });
+
+    const resp = await fetch(`${API}/api/webrtc?src=camera`, {
+      method:  'POST',
+      body:    pc.localDescription.sdp,
+      headers: { 'Content-Type': 'application/sdp' },
+    });
+
+    if (!resp.ok) throw new Error(`go2rtc returned ${resp.status}`);
+    const sdpAnswer = await resp.text();
+    await pc.setRemoteDescription({ type: 'answer', sdp: sdpAnswer });
+
+    video.play().catch(() => {});
+
+    // Start latency polling
+    latencyTimer = setInterval(updateLatency, 2000);
+    setLatencyDisplay('—', 'WebRTC');
+
+  } catch (e) {
+    console.warn('[WebRTC] failed, falling back to HLS:', e);
+    toast('WebRTC unavailable — HLS fallback', 'error');
+    destroyWebRTC();
+    setLatencyDisplay('HLS', 'HLS');
+    startHls(`${API}/api/live.m3u8`);
+  }
+}
+
+async function updateLatency() {
+  if (!pc) return;
+  try {
+    const stats = await pc.getStats();
+    let delayMs = null;
+    stats.forEach(r => {
+      if (r.type === 'inbound-rtp' && r.kind === 'video') {
+        if (r.jitterBufferDelay != null && r.jitterBufferEmittedCount > 0) {
+          delayMs = Math.round(r.jitterBufferDelay / r.jitterBufferEmittedCount * 1000);
+        }
+      }
+    });
+    setLatencyDisplay(delayMs != null ? `${delayMs}ms` : '—', 'WebRTC');
+  } catch (e) {}
+}
+
+function setLatencyDisplay(value, streamMode) {
+  const el = document.getElementById('latency-display');
+  const sm = document.getElementById('stream-mode');
+  if (el) el.textContent = value;
+  if (sm) sm.textContent = streamMode;
+}
+
+// ════════════════════════════════════════════════════════════════
+// Live mode (WebRTC)
+// ════════════════════════════════════════════════════════════════
 function startLive() {
   mode = 'live';
   document.getElementById('dvr-badge').classList.remove('visible');
   document.getElementById('live-btn').style.opacity = '.4';
   document.getElementById('pp-btn').textContent = '⏸ Pause';
-  startHls(`${API}/api/live.m3u8`);
   document.getElementById('loading-msg').classList.add('hidden');
+  startWebRTC();
 }
 
 function goLive() {
   startLive();
   document.getElementById('fwd-btn').disabled = true;
-  toast('Switched to LIVE', 'success');
+  toast('Switched to LIVE (WebRTC)', 'success');
 }
 
-// ── DVR mode ──────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+// DVR mode (HLS)
+// ════════════════════════════════════════════════════════════════
 const FPS   = 25;
 const FRAME = 1 / FPS;
 
@@ -502,7 +620,10 @@ function seekTo(ts) {
   document.getElementById('live-btn').style.opacity = '1';
   document.getElementById('fwd-btn').disabled = false;
 
-  // Build clip playlist: from ts to end of buffer (or +5 min)
+  // Stop WebRTC, switch to HLS for DVR
+  destroyWebRTC();
+  setLatencyDisplay('HLS', 'DVR');
+
   const to = bufferNewest || (ts + 300);
   startHls(`${API}/api/clip.m3u8?from_time=${ts}&to_time=${to}`);
 }
@@ -556,14 +677,13 @@ async function refreshStatus() {
     bufferOldest = d.oldest_segment_time;
     bufferNewest = d.newest_segment_time;
 
-    // Dot + label
     const dot   = document.getElementById('status-dot');
     const label = document.getElementById('status-label');
     if (d.recording) {
       dot.className = 'status-dot live';
       label.textContent = 'Recording';
     } else {
-      dot.className = d.rtsp_url ? 'status-dot' : 'status-dot';
+      dot.className = 'status-dot';
       label.textContent = d.rtsp_url ? 'Stopped' : 'No source';
     }
 
@@ -578,7 +698,6 @@ async function refreshStatus() {
     document.getElementById('buffer-info').textContent =
       `Buffer: ${durStr} / ${d.buffer_minutes}min`;
 
-    // Current time display
     if (mode === 'live') {
       document.getElementById('current-time-display').textContent = '▶ LIVE – ' + fmtTime(Date.now()/1000);
     }
@@ -608,14 +727,11 @@ function renderTimeline() {
   bufferNewest = newest;
 
   const totalSec = newest - oldest || 1;
-  const nowFrac  = 1.0; // live edge
-  document.getElementById('timeline-fill').style.width = (nowFrac * 100) + '%';
+  document.getElementById('timeline-fill').style.width = '100%';
 
-  // Range label
   document.getElementById('timeline-range-label').textContent =
     fmtTime(oldest) + ' → ' + fmtTime(newest);
 
-  // Tick marks (every 5 or 10 minutes)
   const stepMin = totalSec <= 600 ? 1 : totalSec <= 1800 ? 5 : 10;
   const ticksEl = document.getElementById('timeline-ticks');
   ticksEl.innerHTML = '';
@@ -710,7 +826,6 @@ async function scanNetwork() {
   btn.textContent = '⏳ Scanning…';
   btn.disabled    = true;
 
-  // Update config with chosen network first
   await fetch(`${API}/api/config`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ scan_network: net })

@@ -13,17 +13,21 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Optional
+from urllib import request as urllib_request
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 # ─── Configuration ──────────────────────────────────────────────────────────
-BASE_DIR    = Path(__file__).parent.parent
-BUFFER_DIR  = BASE_DIR / "buffer"
-FRONTEND_DIR= BASE_DIR / "frontend"
-CONFIG_FILE = BASE_DIR / "config.json"
+BASE_DIR     = Path(__file__).parent.parent
+BUFFER_DIR   = BASE_DIR / "buffer"
+FRONTEND_DIR = BASE_DIR / "frontend"
+CONFIG_FILE  = BASE_DIR / "config.json"
+GO2RTC_BIN   = BASE_DIR / "go2rtc"
+GO2RTC_CFG   = BASE_DIR / "go2rtc.yaml"
+GO2RTC_API   = "http://localhost:1984"
 
 BUFFER_DIR.mkdir(exist_ok=True)
 
@@ -52,7 +56,7 @@ def save_config(cfg: dict):
         json.dump(cfg, f, indent=2)
 
 # ─── App ─────────────────────────────────────────────────────────────────────
-app = FastAPI(title="Mini-DVR API", version="1.0.0")
+app = FastAPI(title="Mini-DVR API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -62,8 +66,10 @@ app.add_middleware(
 )
 
 # ─── State ───────────────────────────────────────────────────────────────────
-ffmpeg_process: Optional[asyncio.subprocess.Process] = None
-recorder_task:  Optional[asyncio.Task] = None
+ffmpeg_process:  Optional[asyncio.subprocess.Process] = None
+recorder_task:   Optional[asyncio.Task] = None
+go2rtc_process:  Optional[asyncio.subprocess.Process] = None
+go2rtc_task:     Optional[asyncio.Task] = None
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -176,6 +182,34 @@ async def run_recorder():
             print(f"[recorder] Error: {e}")
 
         print("[recorder] Restarting in 5 s …")
+        await asyncio.sleep(5)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# go2rtc process manager
+# ════════════════════════════════════════════════════════════════════════════
+async def run_go2rtc():
+    global go2rtc_process
+    if not GO2RTC_BIN.exists():
+        print(f"[go2rtc] Binary not found at {GO2RTC_BIN} — skipping. Run install.sh to download it.")
+        return
+
+    cmd = [str(GO2RTC_BIN), "-config", str(GO2RTC_CFG)]
+    while True:
+        print(f"[go2rtc] Starting: {' '.join(cmd)}")
+        try:
+            go2rtc_process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            _, _ = await go2rtc_process.communicate()
+            code = go2rtc_process.returncode
+            print(f"[go2rtc] Exited ({code})")
+        except Exception as e:
+            print(f"[go2rtc] Error: {e}")
+
+        print("[go2rtc] Restarting in 5 s …")
         await asyncio.sleep(5)
 
 
@@ -392,6 +426,35 @@ async def scan_network():
     return {"cameras": results, "network": network}
 
 
+@app.get("/api/webrtc-url")
+def webrtc_url():
+    return {"url": f"{GO2RTC_API}/api/ws?src=camera"}
+
+
+@app.post("/api/webrtc")
+async def proxy_webrtc(request: Request, src: str = Query("camera")):
+    """Proxy WebRTC SDP offer/answer to go2rtc (single-port architecture)."""
+    body = await request.body()
+    content_type = request.headers.get("content-type", "application/sdp")
+
+    def do_req():
+        req = urllib_request.Request(
+            f"{GO2RTC_API}/api/webrtc?src={src}",
+            data=body,
+            method="POST",
+            headers={"Content-Type": content_type},
+        )
+        with urllib_request.urlopen(req, timeout=10) as resp:
+            return resp.read(), resp.headers.get("Content-Type", "application/sdp")
+
+    loop = asyncio.get_event_loop()
+    try:
+        resp_body, resp_ct = await loop.run_in_executor(None, do_req)
+        return Response(content=resp_body, media_type=resp_ct)
+    except Exception as e:
+        raise HTTPException(503, f"go2rtc unavailable: {e}")
+
+
 @app.post("/api/clear-buffer")
 async def clear_buffer():
     """Delete all segments from buffer."""
@@ -416,10 +479,12 @@ async def cleanup_buffer_loop():
 
 @app.on_event("startup")
 async def startup():
+    global recorder_task, go2rtc_task
     asyncio.create_task(cleanup_buffer_loop())
+    go2rtc_task = asyncio.create_task(run_go2rtc())
+    print("[startup] go2rtc task created")
     cfg = load_config()
     if cfg.get("rtsp_url"):
-        global recorder_task
         recorder_task = asyncio.create_task(run_recorder())
         print(f"[startup] Auto-starting recorder for {cfg['rtsp_url']}")
 

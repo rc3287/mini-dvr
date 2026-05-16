@@ -31,6 +31,19 @@ pip install fastapi uvicorn[standard] -q
 echo ""
 echo "==> Dependencies installed successfully."
 
+# ── go2rtc binary ────────────────────────────────────────────────
+echo ""
+echo "==> Downloading go2rtc..."
+GO2RTC_BIN="$INSTALL_DIR/go2rtc"
+if [ ! -f "$GO2RTC_BIN" ]; then
+  wget -q https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_linux_amd64 \
+    -O "$GO2RTC_BIN"
+  chmod +x "$GO2RTC_BIN"
+  echo "go2rtc downloaded."
+else
+  echo "go2rtc already present, skipping."
+fi
+
 # ── Buffer dir ───────────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR/buffer"
 
