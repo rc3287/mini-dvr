@@ -11,3 +11,6 @@ __pycache__/
 
 # Config (contains RTSP URL / credentials)
 config.json
+
+# go2rtc binary (downloaded by install.sh)
+go2rtc
