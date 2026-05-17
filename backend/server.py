@@ -7,7 +7,6 @@ FastAPI server managing buffer, HLS playlist and network scanner
 import asyncio
 import glob
 import json
-import os
 import re
 import subprocess
 import time
@@ -17,7 +16,7 @@ from urllib import request as urllib_request
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 # ─── Configuration ──────────────────────────────────────────────────────────
@@ -77,7 +76,7 @@ go2rtc_task:     Optional[asyncio.Task] = None
 # ════════════════════════════════════════════════════════════════════════════
 def get_segments() -> list[dict]:
     """Return sorted list of segments with metadata."""
-    files = sorted(glob.glob(str(BUFFER_DIR / "segment_*.ts")))
+    files = glob.glob(str(BUFFER_DIR / "segment_*.ts"))
     segments = []
     for f in files:
         p = Path(f)
@@ -123,23 +122,6 @@ def build_playlist(segs: list[dict], seg_duration: int) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build_live_playlist(seg_duration: int) -> str:
-    """Rolling live playlist (last 5 segments)."""
-    all_segs = get_segments()
-    live_segs = all_segs[-5:] if len(all_segs) >= 5 else all_segs
-    lines = [
-        "#EXTM3U",
-        "#EXT-X-VERSION:3",
-        f"#EXT-X-TARGETDURATION:{seg_duration + 1}",
-        "#EXT-X-MEDIA-SEQUENCE:0",
-        "#EXT-X-ALLOW-CACHE:NO",
-    ]
-    for s in live_segs:
-        lines.append(f"#EXTINF:{seg_duration}.0,")
-        lines.append(f"/segments/{s['name']}")
-    return "\n".join(lines) + "\n"
-
-
 # ════════════════════════════════════════════════════════════════════════════
 # FFmpeg recorder
 # ════════════════════════════════════════════════════════════════════════════
@@ -148,8 +130,6 @@ async def run_recorder():
     cfg = load_config()
     url = cfg["rtsp_url"]
     seg = cfg["segment_seconds"]
-    buf = cfg["buffer_minutes"]
-    max_segs = (buf * 60) // seg
 
     cmd = [
         "ffmpeg",
@@ -200,10 +180,10 @@ async def run_go2rtc():
         try:
             go2rtc_process = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
             )
-            _, _ = await go2rtc_process.communicate()
+            await go2rtc_process.wait()
             code = go2rtc_process.returncode
             print(f"[go2rtc] Exited ({code})")
         except Exception as e:
@@ -282,6 +262,40 @@ def _scan_network(network: str, port: int = 554) -> list[dict]:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# go2rtc config sync
+# ════════════════════════════════════════════════════════════════════════════
+def update_go2rtc_config(rtsp_url: str):
+    """Rewrite go2rtc.yaml with the current RTSP URL."""
+    if rtsp_url:
+        streams_block = f"streams:\n  camera:\n    - {rtsp_url}\n"
+    else:
+        streams_block = "streams: {}\n"
+    content = (
+        streams_block
+        + "\napi:\n  listen: \":1984\"\n"
+        + "\nwebrtc:\n  listen: \":8555/tcp\"\n  candidates:\n    - 127.0.0.1:8555\n"
+    )
+    with open(GO2RTC_CFG, "w") as f:
+        f.write(content)
+
+
+async def restart_go2rtc():
+    global go2rtc_process, go2rtc_task
+    if go2rtc_task:
+        go2rtc_task.cancel()
+        go2rtc_task = None
+    if go2rtc_process:
+        try:
+            go2rtc_process.terminate()
+            await asyncio.wait_for(go2rtc_process.wait(), timeout=5)
+        except Exception:
+            go2rtc_process.kill()
+        go2rtc_process = None
+    await asyncio.sleep(1)
+    go2rtc_task = asyncio.create_task(run_go2rtc())
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # API routes
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -298,8 +312,9 @@ async def set_config(body: dict):
     cfg["buffer_minutes"] = max(10, min(60, int(cfg.get("buffer_minutes", 30))))
     cfg["segment_seconds"] = max(1, min(10, int(cfg.get("segment_seconds", 2))))
     save_config(cfg)
-    # Restart recorder if RTSP URL changed
     if "rtsp_url" in body:
+        update_go2rtc_config(cfg["rtsp_url"])
+        # await restart_go2rtc()  # enable on Linux for WebRTC
         await restart_recorder()
     return {"ok": True, "config": cfg}
 
@@ -421,7 +436,7 @@ async def scan_network():
     cfg = load_config()
     network = cfg.get("scan_network", "192.168.1.0/24")
     port    = cfg.get("rtsp_port", 554)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(None, _scan_network, network, port)
     return {"cameras": results, "network": network}
 
@@ -447,7 +462,7 @@ async def proxy_webrtc(request: Request, src: str = Query("camera")):
         with urllib_request.urlopen(req, timeout=10) as resp:
             return resp.read(), resp.headers.get("Content-Type", "application/sdp")
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         resp_body, resp_ct = await loop.run_in_executor(None, do_req)
         return Response(content=resp_body, media_type=resp_ct)
@@ -481,8 +496,8 @@ async def cleanup_buffer_loop():
 async def startup():
     global recorder_task, go2rtc_task
     asyncio.create_task(cleanup_buffer_loop())
-    go2rtc_task = asyncio.create_task(run_go2rtc())
-    print("[startup] go2rtc task created")
+    # Uncomment on Linux (native) to enable WebRTC live view via go2rtc:
+    # go2rtc_task = asyncio.create_task(run_go2rtc())
     cfg = load_config()
     if cfg.get("rtsp_url"):
         recorder_task = asyncio.create_task(run_recorder())

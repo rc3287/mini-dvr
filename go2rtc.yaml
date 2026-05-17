@@ -1,9 +1,11 @@
 streams:
   camera:
-    - rtsp://admin:Damp1957-@10.0.0.4:554/h264Preview_01_sub
+    - rtsp://admin:Damp1957-@10.0.0.2:554/h264Preview_01_sub
 
 api:
   listen: ":1984"
 
 webrtc:
   listen: ":8555/tcp"
+  candidates:
+    - 127.0.0.1:8555

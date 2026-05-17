@@ -171,7 +171,7 @@ html, body {
     <button class="header-btn danger" onclick="clearBuffer()">⊗ Clear buffer</button>
   </header>
 
-  <!-- ── Player : deux <video>, un seul visible ── -->
+  <!-- ── Player: two <video> elements, only one visible at a time ── -->
   <div id="player-area">
     <video id="video-webrtc" class="video-player" playsinline autoplay muted></video>
     <video id="video-hls"    class="video-player" playsinline autoplay muted style="display:none"></video>
@@ -252,8 +252,8 @@ html, body {
   <div id="controls">
     <button class="ctrl-btn live-btn" onclick="goLive()" id="live-btn">▶ LIVE</button>
     <button class="ctrl-btn" onclick="playPause()" id="pp-btn">⏸ Pause</button>
-    <button class="ctrl-btn step-btn" onclick="stepBack()"    id="back-btn" title="Image précédente (←)">◀ img</button>
-    <button class="ctrl-btn step-btn" onclick="stepForward()" id="fwd-btn"  title="Image suivante (→)" disabled>img ▶</button>
+    <button class="ctrl-btn step-btn" onclick="stepBack()"    id="back-btn" title="Previous frame (←)">◀ img</button>
+    <button class="ctrl-btn step-btn" onclick="stepForward()" id="fwd-btn"  title="Next frame (→)" disabled>img ▶</button>
     <div id="current-time-display">—</div>
     <div id="buffer-info">Buffer: — / —</div>
   </div>
@@ -264,17 +264,15 @@ html, body {
 
 <script>
 /* ═══════════════════════════════════════════════════════════════
-   Mini-DVR Frontend — v2.0.1
-   Live  : WebRTC  → <video id="video-webrtc">
-   DVR   : HLS.js  → <video id="video-hls">
+   Mini-DVR Frontend — v2.0.0
+   Live  : HLS.js  → /api/live.m3u8  (FFmpeg rolling playlist)
+   DVR   : HLS.js  → /api/clip.m3u8  (time-range clip)
    ═══════════════════════════════════════════════════════════════ */
 
 const API = '';
 
 // ── State ─────────────────────────────────────────────────────
-let hlsInstance  = null;   // HLS.js instance (DVR)
-let rtcPc        = null;   // RTCPeerConnection (Live)
-let latencyTimer = null;
+let hlsInstance  = null;   // HLS.js instance (live & DVR)
 let currentMode  = 'live'; // 'live' | 'dvr'
 
 let statusInterval   = null;
@@ -298,107 +296,68 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// LIVE mode — WebRTC via go2rtc
+// LIVE mode — HLS rolling playlist from FFmpeg
 // ══════════════════════════════════════════════════════════════
-async function switchToLive() {
-  // 1. Détruire HLS
+function switchToLive() {
+  // 1. Destroy previous HLS instance
   if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
 
-  // 2. Cacher video-hls, montrer video-webrtc
-  document.getElementById('video-hls').style.display    = 'none';
-  document.getElementById('video-webrtc').style.display = 'block';
+  // 2. video-webrtc stays hidden, use video-hls for everything
+  document.getElementById('video-webrtc').style.display = 'none';
+  document.getElementById('video-hls').style.display    = 'block';
 
-  // 3. Fermer la connexion WebRTC existante proprement
-  if (latencyTimer) { clearInterval(latencyTimer); latencyTimer = null; }
-  if (rtcPc) { rtcPc.close(); rtcPc = null; }
-
-  // 4. UI
+  // 3. UI state
   currentMode = 'live';
   document.getElementById('dvr-badge').classList.remove('visible');
   document.getElementById('live-btn').style.opacity = '.4';
   document.getElementById('fwd-btn').disabled = true;
   document.getElementById('pp-btn').textContent = '⏸ Pause';
   document.getElementById('loading-msg').classList.add('hidden');
-  setLatencyDisplay('—', 'WebRTC');
+  setLatencyDisplay('—', 'HLS');
 
-  // 5. Nouvelle connexion WebRTC
-  await initWebRTC();
-}
-
-async function goLive() {
-  await switchToLive();
-  toast('Switched to LIVE', 'success');
-}
-
-async function initWebRTC() {
-  const video = document.getElementById('video-webrtc');
-  try {
-    const pc = new RTCPeerConnection();
-    rtcPc = pc;
-
-    pc.addTransceiver('video', { direction: 'recvonly' });
-    pc.addTransceiver('audio', { direction: 'recvonly' });
-
-    pc.ontrack = (e) => {
-      if (video.srcObject !== e.streams[0]) {
-        video.srcObject = e.streams[0];
-      }
-    };
-
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    const resp = await fetch('http://localhost:1984/api/webrtc?src=camera', {
-      method:  'POST',
-      body:    offer.sdp,
-      headers: { 'Content-Type': 'application/sdp' },
+  // 4. Load live HLS playlist
+  const video = document.getElementById('video-hls');
+  if (Hls.isSupported()) {
+    hlsInstance = new Hls({
+      liveSyncDurationCount:       2,
+      liveMaxLatencyDurationCount: 5,
+      maxBufferLength:             10,
+      manifestLoadingMaxRetry:     10,
+      manifestLoadingRetryDelay:   2000,
     });
-    if (!resp.ok) throw new Error(`go2rtc HTTP ${resp.status}`);
-
-    const sdp = await resp.text();
-    await pc.setRemoteDescription({ type: 'answer', sdp });
-
-    latencyTimer = setInterval(updateLatency, 2000);
-
-  } catch (err) {
-    console.warn('[WebRTC] failed:', err);
-    toast('WebRTC unavailable: ' + err.message, 'error');
-    setLatencyDisplay('—', '—');
+    hlsInstance.attachMedia(video);
+    hlsInstance.loadSource(`${API}/api/live.m3u8`);
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+      video.play().catch(() => {});
+    });
+    hlsInstance.on(Hls.Events.FRAG_CHANGED, (_, d) => {
+      setLatencyDisplay(`~${Math.round(d.frag.duration * 2)}s`, 'HLS');
+    });
+    hlsInstance.on(Hls.Events.ERROR, (_, d) => {
+      if (d.fatal) {
+        hlsInstance.destroy(); hlsInstance = null;
+        setTimeout(() => { if (currentMode === 'live') switchToLive(); }, 3000);
+      }
+    });
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = `${API}/api/live.m3u8`;
+    video.play().catch(() => {});
   }
 }
 
-async function updateLatency() {
-  if (!rtcPc) return;
-  try {
-    const stats = await rtcPc.getStats();
-    let delayMs = null;
-    stats.forEach(r => {
-      if (r.type === 'inbound-rtp' && r.kind === 'video') {
-        if (r.jitterBufferDelay != null && r.jitterBufferEmittedCount > 0) {
-          delayMs = Math.round(r.jitterBufferDelay / r.jitterBufferEmittedCount * 1000);
-        }
-      }
-    });
-    setLatencyDisplay(delayMs != null ? `${delayMs}ms` : '—', 'WebRTC');
-  } catch (_) {}
+function goLive() {
+  switchToLive();
+  toast('Switched to LIVE', 'success');
 }
 
 // ══════════════════════════════════════════════════════════════
 // DVR mode — HLS.js
 // ══════════════════════════════════════════════════════════════
 async function switchToDvr(ts) {
-  // 1. Fermer WebRTC
-  if (latencyTimer) { clearInterval(latencyTimer); latencyTimer = null; }
-  if (rtcPc) { rtcPc.close(); rtcPc = null; }
-
-  // 2. Cacher video-webrtc, montrer video-hls
-  document.getElementById('video-webrtc').style.display = 'none';
-  document.getElementById('video-hls').style.display    = 'block';
-
-  // 3. Détruire l'instance HLS précédente
+  // 1. Destroy live HLS instance
   if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
 
-  // 4. UI
+  // 4. UI state
   currentMode = 'dvr';
   dvrPosition = ts;
   document.getElementById('dvr-badge').classList.add('visible');
@@ -406,7 +365,7 @@ async function switchToDvr(ts) {
   document.getElementById('fwd-btn').disabled = false;
   setLatencyDisplay('HLS', 'DVR');
 
-  // 5. Charger le clip via HLS.js
+  // 5. Load clip via HLS.js
   const to     = bufferNewest || (ts + 300);
   const url    = `${API}/api/clip.m3u8?from_time=${ts}&to_time=${to}`;
   const video  = document.getElementById('video-hls');
@@ -454,9 +413,7 @@ document.addEventListener('keydown', (e) => {
 
 // ── Play / pause ──────────────────────────────────────────────
 function playPause() {
-  const video = currentMode === 'live'
-    ? document.getElementById('video-webrtc')
-    : document.getElementById('video-hls');
+  const video = document.getElementById('video-hls');
   const btn = document.getElementById('pp-btn');
   if (video.paused) { video.play().catch(() => {}); btn.textContent = '⏸ Pause'; }
   else              { video.pause();                btn.textContent = '▶ Play';  }
@@ -553,11 +510,8 @@ function timelineLeave() {
 }
 
 async function timelineClick(e) {
-  if (!bufferOldest || !bufferNewest) return;
-
-  const status = await fetch(`${API}/api/status`).then(r => r.json()).catch(() => null);
-  if (!status || status.segment_count === 0) {
-    toast('Buffer vide — attends quelques secondes', 'error');
+  if (!bufferSegs.length) {
+    toast('Buffer empty — wait a few seconds', 'error');
     return;
   }
 
