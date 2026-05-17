@@ -150,6 +150,48 @@ html, body {
 #toast.show { opacity: 1; }
 #toast.error { border-color: var(--red); color: var(--red); }
 #toast.success { border-color: var(--green); color: var(--green); }
+
+/* ── Timeline selection band ── */
+#selection-band {
+  position: absolute; top: 0; height: 100%;
+  background: rgba(255, 107, 53, 0.22);
+  pointer-events: none; display: none;
+}
+#sel-handle-in, #sel-handle-out {
+  position: absolute; top: -4px; bottom: -4px;
+  width: 8px; transform: translateX(-50%);
+  background: var(--accent2);
+  border-radius: 3px;
+  cursor: ew-resize;
+  pointer-events: all;
+  display: none;
+  z-index: 4;
+  opacity: .85;
+  transition: opacity .15s, background .15s;
+}
+#sel-handle-in:hover, #sel-handle-out:hover {
+  opacity: 1; background: #fff;
+}
+
+/* ── Selection panel ── */
+#sel-panel {
+  display: none; flex-direction: row;
+  align-items: center; gap: 16px;
+  padding: 10px 16px 8px;
+  background: var(--surface2);
+  border-top: 1px solid var(--border);
+}
+.sel-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.sel-col-label { font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.sel-col-time  { font-size: 11px; font-weight: 700; color: var(--accent2); letter-spacing: .04em; white-space: nowrap; }
+.sel-thumb {
+  width: 160px; height: 90px; background: #000;
+  border: 1px solid var(--border); border-radius: var(--radius); object-fit: contain;
+}
+.sel-center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+#sel-dur { font-size: 24px; font-weight: 700; color: var(--accent); letter-spacing: .04em; }
+.sel-actions { display: flex; gap: 8px; }
+.sel-hint { font-size: 9px; color: var(--muted); letter-spacing: .04em; text-align: center; line-height: 1.6; }
 </style>
 </head>
 <body>
@@ -234,18 +276,43 @@ html, body {
   <!-- ── Timeline ── -->
   <div id="timeline-area">
     <div id="timeline-label">
-      <span>Timeline</span>
+      <span>Timeline — drag to select, or click to scrub</span>
       <span id="timeline-range-label" style="color:var(--accent)">—</span>
     </div>
     <div id="timeline-wrap"
+         onmousedown="timelineMouseDown(event)"
          onmousemove="timelineHover(event)"
-         onmouseleave="timelineLeave()"
-         onclick="timelineClick(event)">
+         onmouseleave="timelineLeave()">
       <div id="timeline-fill"></div>
+      <div id="selection-band"></div>
+      <div id="sel-handle-in"  onmousedown="handleInMouseDown(event)"></div>
+      <div id="sel-handle-out" onmousedown="handleOutMouseDown(event)"></div>
       <div id="timeline-cursor"></div>
       <div id="timeline-time-label"></div>
     </div>
     <div id="timeline-ticks"></div>
+
+    <!-- ── Selection preview panel ── -->
+    <div id="sel-panel">
+      <div class="sel-col">
+        <div class="sel-col-label">IN</div>
+        <div class="sel-col-time" id="sel-in-time">—</div>
+        <video id="thumb-in" class="sel-thumb" muted playsinline></video>
+      </div>
+      <div class="sel-center">
+        <div id="sel-dur">0s</div>
+        <div class="sel-actions">
+          <button class="btn primary" style="width:auto;padding:6px 20px" onclick="exportClip()">⬇ Export clip</button>
+          <button class="btn" style="width:auto;padding:6px 14px" onclick="clearSelection()">✕</button>
+        </div>
+        <div class="sel-hint">Drag on timeline to select &nbsp;·&nbsp; I = set IN &nbsp;·&nbsp; O = set OUT &nbsp;·&nbsp; Esc = clear</div>
+      </div>
+      <div class="sel-col">
+        <div class="sel-col-label">OUT</div>
+        <div class="sel-col-time" id="sel-out-time">—</div>
+        <video id="thumb-out" class="sel-thumb" muted playsinline></video>
+      </div>
+    </div>
   </div>
 
   <!-- ── Controls ── -->
@@ -284,6 +351,15 @@ let dvrPosition  = null;
 
 const FPS   = 25;
 const FRAME = 1 / FPS;
+
+// ── Selection state ───────────────────────────────────────────
+let selStart     = null;
+let selEnd       = null;
+let isDragging   = false;
+let dragMode     = null;   // 'new' | 'in' | 'out'
+let dragTsAnchor = null;
+let thumbHlsIn   = null;
+let thumbHlsOut  = null;
 
 // ── Init ──────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
@@ -409,6 +485,62 @@ function stepForward() {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowLeft')  { e.preventDefault(); stepBack(); }
   if (e.key === 'ArrowRight') { e.preventDefault(); stepForward(); }
+  if (e.key === 'Escape') { clearSelection(); }
+  if ((e.key === 'i' || e.key === 'I') && currentMode === 'dvr' && dvrPosition !== null) {
+    const video = document.getElementById('video-hls');
+    selStart = dvrPosition + video.currentTime;
+    if (selEnd !== null && selEnd <= selStart) selEnd = null;
+    renderSelectionBand();
+    if (selStart && selEnd) { updateSelectionUI(); loadFrameThumbnails(); }
+    else document.getElementById('sel-panel').style.display = 'none';
+    toast('IN: ' + fmtDateTime(selStart), 'success');
+  }
+  if ((e.key === 'o' || e.key === 'O') && currentMode === 'dvr' && dvrPosition !== null) {
+    const video = document.getElementById('video-hls');
+    selEnd = dvrPosition + video.currentTime;
+    if (selStart !== null && selStart >= selEnd) selStart = null;
+    renderSelectionBand();
+    if (selStart && selEnd) { updateSelectionUI(); loadFrameThumbnails(); }
+    else document.getElementById('sel-panel').style.display = 'none';
+    toast('OUT: ' + fmtDateTime(selEnd), 'success');
+  }
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!isDragging || !bufferOldest || !bufferNewest) return;
+  const wrap = document.getElementById('timeline-wrap');
+  const rect = wrap.getBoundingClientRect();
+  const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const ts   = bufferOldest + frac * (bufferNewest - bufferOldest);
+  if (dragMode === 'new') {
+    selStart = Math.min(dragTsAnchor, ts);
+    selEnd   = Math.max(dragTsAnchor, ts);
+  } else if (dragMode === 'in') {
+    selStart = Math.min(ts, selEnd - 1);
+  } else if (dragMode === 'out') {
+    selEnd = Math.max(ts, selStart + 1);
+  }
+  renderSelectionBand();
+});
+
+document.addEventListener('mouseup', async (e) => {
+  if (!isDragging) return;
+  const mode = dragMode;
+  isDragging = false;
+  dragMode   = null;
+
+  if (mode === 'new' && (selEnd - selStart) < 1) {
+    // Too small → treat as click → DVR navigation
+    const ts = dragTsAnchor;
+    selStart = selEnd = null;
+    renderSelectionBand();
+    if (!bufferSegs.length) { toast('Buffer empty — wait a few seconds', 'error'); return; }
+    await switchToDvr(ts);
+    document.getElementById('current-time-display').textContent = '⏪ DVR – ' + fmtDateTime(ts);
+  } else {
+    updateSelectionUI();
+    loadFrameThumbnails();
+  }
 });
 
 // ── Play / pause ──────────────────────────────────────────────
@@ -454,7 +586,127 @@ async function refreshStatus() {
   }
 }
 
-// ── Timeline ──────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// Timeline — drag-to-select + click-to-scrub
+// ══════════════════════════════════════════════════════════════
+function timelineMouseDown(e) {
+  if (!bufferOldest || !bufferNewest) return;
+  if (e.target.id === 'sel-handle-in' || e.target.id === 'sel-handle-out') return;
+  e.preventDefault();
+  const wrap = document.getElementById('timeline-wrap');
+  const rect = wrap.getBoundingClientRect();
+  const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  dragTsAnchor = bufferOldest + frac * (bufferNewest - bufferOldest);
+  selStart = dragTsAnchor;
+  selEnd   = dragTsAnchor;
+  isDragging = true;
+  dragMode   = 'new';
+  renderSelectionBand();
+}
+
+function handleInMouseDown(e) {
+  e.preventDefault(); e.stopPropagation();
+  isDragging = true;
+  dragMode   = 'in';
+}
+
+function handleOutMouseDown(e) {
+  e.preventDefault(); e.stopPropagation();
+  isDragging = true;
+  dragMode   = 'out';
+}
+
+function renderSelectionBand() {
+  const band = document.getElementById('selection-band');
+  const hIn  = document.getElementById('sel-handle-in');
+  const hOut = document.getElementById('sel-handle-out');
+  if (!selStart || !selEnd || !bufferOldest || !bufferNewest || selEnd <= selStart) {
+    band.style.display = 'none';
+    hIn.style.display  = 'none';
+    hOut.style.display = 'none';
+    return;
+  }
+  const total    = bufferNewest - bufferOldest || 1;
+  const leftPct  = (selStart - bufferOldest) / total * 100;
+  const rightPct = (selEnd   - bufferOldest) / total * 100;
+  band.style.left    = leftPct  + '%';
+  band.style.width   = (rightPct - leftPct) + '%';
+  band.style.display = 'block';
+  hIn.style.left     = leftPct  + '%';
+  hIn.style.display  = 'block';
+  hOut.style.left    = rightPct + '%';
+  hOut.style.display = 'block';
+}
+
+function updateSelectionUI() {
+  const dur = selEnd - selStart;
+  const m = Math.floor(dur / 60), s = Math.round(dur % 60);
+  document.getElementById('sel-dur').textContent      = m > 0 ? `${m}m ${s}s` : `${s}s`;
+  document.getElementById('sel-in-time').textContent  = fmtDateTime(selStart);
+  document.getElementById('sel-out-time').textContent = fmtDateTime(selEnd);
+  document.getElementById('sel-panel').style.display  = 'flex';
+}
+
+function clearSelection() {
+  selStart = selEnd = null;
+  isDragging = false; dragMode = null;
+  renderSelectionBand();
+  document.getElementById('sel-panel').style.display  = 'none';
+  document.getElementById('sel-handle-in').style.display  = 'none';
+  document.getElementById('sel-handle-out').style.display = 'none';
+  if (thumbHlsIn)  { thumbHlsIn.destroy();  thumbHlsIn  = null; }
+  if (thumbHlsOut) { thumbHlsOut.destroy(); thumbHlsOut = null; }
+  const vIn  = document.getElementById('thumb-in');
+  const vOut = document.getElementById('thumb-out');
+  vIn.src = ''; vOut.src = '';
+}
+
+function loadFrameThumbnails() {
+  if (!selStart || !selEnd) return;
+  const hlsCfg = { maxBufferLength: 8, manifestLoadingMaxRetry: 2 };
+
+  // IN thumbnail — first ~8 s after selStart
+  if (thumbHlsIn) { thumbHlsIn.destroy(); thumbHlsIn = null; }
+  const vIn   = document.getElementById('thumb-in');
+  const inUrl = `${API}/api/clip.m3u8?from_time=${selStart}&to_time=${selStart + 8}`;
+  if (Hls.isSupported()) {
+    thumbHlsIn = new Hls(hlsCfg);
+    thumbHlsIn.attachMedia(vIn);
+    thumbHlsIn.loadSource(inUrl);
+    thumbHlsIn.on(Hls.Events.MANIFEST_PARSED, () => {
+      vIn.play().then(() => vIn.pause()).catch(() => {});
+    });
+    thumbHlsIn.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) { thumbHlsIn.destroy(); thumbHlsIn = null; } });
+  }
+
+  // OUT thumbnail — last ~8 s before selEnd
+  if (thumbHlsOut) { thumbHlsOut.destroy(); thumbHlsOut = null; }
+  const vOut   = document.getElementById('thumb-out');
+  const outUrl = `${API}/api/clip.m3u8?from_time=${selEnd - 8}&to_time=${selEnd}`;
+  if (Hls.isSupported()) {
+    thumbHlsOut = new Hls(hlsCfg);
+    thumbHlsOut.attachMedia(vOut);
+    thumbHlsOut.loadSource(outUrl);
+    thumbHlsOut.on(Hls.Events.MANIFEST_PARSED, () => {
+      vOut.play().catch(() => {});
+    });
+    thumbHlsOut.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) { thumbHlsOut.destroy(); thumbHlsOut = null; } });
+  }
+}
+
+async function exportClip() {
+  if (!selStart || !selEnd) { toast('No selection', 'error'); return; }
+  toast('Generating clip…', 'success');
+  const url = `${API}/api/export?from_time=${selStart}&to_time=${selEnd}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `clip_${fmtDateTime(selStart).replace(/[:\s.]/g, '_')}.mp4`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+// ── Timeline data ─────────────────────────────────────────────
 async function refreshTimeline() {
   try {
     const r    = await fetch(`${API}/api/segments`);
@@ -507,21 +759,6 @@ function timelineHover(e) {
 function timelineLeave() {
   document.getElementById('timeline-cursor').style.display    = 'none';
   document.getElementById('timeline-time-label').style.display = 'none';
-}
-
-async function timelineClick(e) {
-  if (!bufferSegs.length) {
-    toast('Buffer empty — wait a few seconds', 'error');
-    return;
-  }
-
-  const wrap = document.getElementById('timeline-wrap');
-  const rect = wrap.getBoundingClientRect();
-  const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-  const ts   = bufferOldest + frac * (bufferNewest - bufferOldest);
-
-  await switchToDvr(ts);
-  document.getElementById('current-time-display').textContent = '⏪ DVR – ' + fmtDateTime(ts);
 }
 
 // ── Settings ──────────────────────────────────────────────────

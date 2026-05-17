@@ -7,8 +7,10 @@ FastAPI server managing buffer, HLS playlist and network scanner
 import asyncio
 import glob
 import json
+import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -18,6 +20,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 # ─── Configuration ──────────────────────────────────────────────────────────
 BASE_DIR     = Path(__file__).parent.parent
@@ -380,6 +383,60 @@ def clip_playlist(
     m3u8 = build_playlist(clip, cfg["segment_seconds"])
     m3u8 += "#EXT-X-ENDLIST\n"
     return PlainTextResponse(m3u8, media_type="application/vnd.apple.mpegurl")
+
+
+@app.get("/api/export")
+async def export_clip(
+    from_time: float = Query(..., description="Unix timestamp start"),
+    to_time:   float = Query(..., description="Unix timestamp end"),
+):
+    """Concatenate segments in range and return as a downloadable .mp4."""
+    cfg  = load_config()
+    segs = segments_in_window(cfg["buffer_minutes"])
+    clip = [s for s in segs if from_time <= s["mtime"] <= to_time]
+    if not clip:
+        raise HTTPException(404, "No segments in requested time range")
+
+    fd_concat, concat_path = tempfile.mkstemp(suffix=".txt")
+    _, output_path = tempfile.mkstemp(suffix=".mp4")
+    try:
+        with os.fdopen(fd_concat, "w") as f:
+            for s in clip:
+                f.write(f"file '{s['file']}'\n")
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", concat_path,
+            "-c", "copy",
+            output_path,
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+    finally:
+        try:
+            os.unlink(concat_path)
+        except OSError:
+            pass
+
+    if proc.returncode != 0 or not Path(output_path).exists():
+        try:
+            os.unlink(output_path)
+        except OSError:
+            pass
+        raise HTTPException(500, "FFmpeg export failed")
+
+    filename = f"clip_{int(from_time)}.mp4"
+    return FileResponse(
+        output_path,
+        media_type="video/mp4",
+        filename=filename,
+        background=BackgroundTask(os.unlink, output_path),
+    )
 
 
 @app.get("/segments/{filename}")
