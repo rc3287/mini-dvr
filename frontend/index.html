@@ -141,6 +141,13 @@ html, body {
 .ctrl-btn.step-btn { letter-spacing: .02em; }
 #current-time-display { font-size: 13px; color: var(--accent); letter-spacing: .06em; min-width: 160px; }
 #buffer-info { margin-left: auto; font-size: 10px; color: var(--muted); letter-spacing: .04em; }
+#step-select {
+  padding: 5px 7px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--surface2);
+  color: var(--text); font-family: var(--font); font-size: 11px;
+  letter-spacing: .05em; cursor: pointer; outline: none;
+}
+#step-select:focus { border-color: var(--accent); }
 
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -319,8 +326,15 @@ html, body {
   <div id="controls">
     <button class="ctrl-btn live-btn" onclick="goLive()" id="live-btn">▶ LIVE</button>
     <button class="ctrl-btn" onclick="playPause()" id="pp-btn">⏸ Pause</button>
-    <button class="ctrl-btn step-btn" onclick="stepBack()"    id="back-btn" title="Previous frame (←)">◀ img</button>
-    <button class="ctrl-btn step-btn" onclick="stepForward()" id="fwd-btn"  title="Next frame (→)" disabled>img ▶</button>
+    <button class="ctrl-btn step-btn" onclick="stepBack()"    id="back-btn" title="Previous (←)">◀ img</button>
+    <select id="step-select" onchange="setStepSize(this.value)" title="Step size">
+      <option value="frame">1 img</option>
+      <option value="0.1">0.1 s</option>
+      <option value="0.2">0.2 s</option>
+      <option value="0.5">0.5 s</option>
+      <option value="1.0">1.0 s</option>
+    </select>
+    <button class="ctrl-btn step-btn" onclick="stepForward()" id="fwd-btn"  title="Next (→)" disabled>img ▶</button>
     <div id="current-time-display">—</div>
     <div id="buffer-info">Buffer: — / —</div>
   </div>
@@ -351,6 +365,7 @@ let dvrPosition  = null;
 
 const FPS   = 25;
 const FRAME = 1 / FPS;
+let stepSize = FRAME;
 
 // ── Selection state ───────────────────────────────────────────
 let selStart     = null;
@@ -464,11 +479,20 @@ async function switchToDvr(ts) {
 }
 
 // ── Step navigation (DVR only) ────────────────────────────────
+function setStepSize(val) {
+  stepSize = val === 'frame' ? FRAME : parseFloat(val);
+  const label = val === 'frame' ? 'img' : val + 's';
+  document.getElementById('back-btn').innerHTML = `◀ ${label}`;
+  document.getElementById('fwd-btn').innerHTML  = `${label} ▶`;
+  document.getElementById('back-btn').title = `Previous (←) — ${label}`;
+  document.getElementById('fwd-btn').title  = `Next (→) — ${label}`;
+}
+
 function stepBack() {
   if (currentMode !== 'dvr') return;
   const video = document.getElementById('video-hls');
   if (!video.paused) { video.pause(); document.getElementById('pp-btn').textContent = '▶ Play'; }
-  video.currentTime = Math.max(0, video.currentTime - FRAME);
+  video.currentTime = Math.max(0, video.currentTime - stepSize);
   document.getElementById('current-time-display').textContent =
     '⏸ DVR – ' + fmtDateTime(dvrPosition + video.currentTime);
 }
@@ -477,7 +501,7 @@ function stepForward() {
   if (currentMode !== 'dvr') return;
   const video = document.getElementById('video-hls');
   if (!video.paused) { video.pause(); document.getElementById('pp-btn').textContent = '▶ Play'; }
-  video.currentTime += FRAME;
+  video.currentTime += stepSize;
   document.getElementById('current-time-display').textContent =
     '⏸ DVR – ' + fmtDateTime(dvrPosition + video.currentTime);
 }
